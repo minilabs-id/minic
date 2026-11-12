@@ -18,8 +18,17 @@ use minic_core::provider::ModelProvider;
 use minic_core::tool::{ToolContext, ToolRegistry};
 use minic_core::types::Message;
 
-const DEFAULT_SYSTEM: &str = "You are minic, a careful terminal coding agent. \
-Use the provided tools to inspect and edit the workspace. Prefer reading before editing.";
+const DEFAULT_SYSTEM: &str = r"You are minic, a careful terminal coding agent working in the user's workspace.
+
+Ground rules:
+- Inspect before you change: read a file (or grep for the definition) before editing it.
+- Make the smallest change that solves the problem; do not rewrite whole files to fix one line.
+- After changing code, verify it. Run the project's test/check command (e.g. `cargo test`,
+  `npm test`, `pytest`) or the command given by --verify. If it fails, fix the cause before
+  reporting success. Never claim a change works without evidence from a command you ran.
+- If a tool call fails or its arguments are malformed, read the error and correct it; do not
+  repeat the same call unchanged.
+- Report what you actually checked, and say plainly what you did not.";
 
 #[derive(Parser, Debug)]
 #[command(name = "minic", version, about = "Native Rust terminal coding agent")]
@@ -106,6 +115,17 @@ struct Cli {
     /// Tampilkan satu rencana tersimpan lalu keluar (tanpa model).
     #[arg(long, value_name = "ID")]
     plan_show: Option<String>,
+
+    /// Batas token output per respons model. Tanpa ini provider memakai
+    /// default-nya, dan respons panjang bisa terpotong di tengah tool call.
+    #[arg(long, value_name = "N")]
+    max_output_tokens: Option<u32>,
+
+    /// Perintah verifikasi yang dijalankan lewat `bash` setelah tool yang
+    /// mengubah berkas berhasil (mis. "cargo check"). Hasilnya diberikan ke
+    /// model agar ia memperbaiki sendiri, bukan menunggu manusia.
+    #[arg(long, value_name = "CMD")]
+    verify: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -390,6 +410,7 @@ async fn main() -> Result<()> {
             tool_ctx,
             system: system.clone(),
             max_steps: cli.max_steps,
+            verify_command: resolve_verify_command(&cli),
             mode: mode.to_string(),
             cwd: display_root.clone(),
             persistence: persistence.clone(),
@@ -423,9 +444,10 @@ async fn main() -> Result<()> {
         model,
         system,
         max_steps: cli.max_steps,
-        max_tokens: None,
+        max_tokens: resolve_max_output_tokens(&cli),
         context_window_tokens: Some(context_tokens),
         keep_recent: minic_core::compaction::DEFAULT_KEEP_RECENT,
+        verify_command: resolve_verify_command(&cli),
     };
 
     let mut on_event = |event: AgentEvent| {
@@ -545,6 +567,29 @@ fn print_one_plan(root: &std::path::Path, id: &str) -> Result<()> {
         println!("\nrun it with: delegate_task plan_id={} run=true", plan.id);
     }
     Ok(())
+}
+
+/// Batas output: `--max-output-tokens` → `MINIC_MAX_OUTPUT_TOKENS` → None.
+/// Nilai 0 atau tidak valid diabaikan (lebih baik memakai default provider
+/// daripada mengirim `max_tokens: 0` yang membuat model tidak bisa menjawab).
+fn resolve_max_output_tokens(cli: &Cli) -> Option<u32> {
+    cli.max_output_tokens.filter(|n| *n > 0).or_else(|| {
+        std::env::var("MINIC_MAX_OUTPUT_TOKENS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .filter(|n| *n > 0)
+    })
+}
+
+/// Perintah verifikasi: `--verify` → `MINIC_VERIFY` → None.
+/// String kosong/whitespace diabaikan (menjalankan `bash` dengan perintah
+/// kosong hanya menghasilkan kebisingan).
+fn resolve_verify_command(cli: &Cli) -> Option<String> {
+    cli.verify
+        .clone()
+        .or_else(|| std::env::var("MINIC_VERIFY").ok())
+        .map(|cmd| cmd.trim().to_string())
+        .filter(|cmd| !cmd.is_empty())
 }
 
 fn resolve_base_url(cli: &Cli, from_file: Option<String>) -> String {

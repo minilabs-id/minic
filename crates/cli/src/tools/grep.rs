@@ -11,6 +11,24 @@ use serde_json::{Value, json};
 use walkdir::WalkDir;
 
 const DEFAULT_MAX_RESULTS: usize = 100;
+/// Batas atas baris konteks agar satu match tidak menghabiskan konteks model.
+const MAX_CONTEXT_LINES: usize = 10;
+
+/// Format satu match beserta konteksnya: baris match memakai `:`, konteks
+/// memakai `-` (seperti `grep -C`) sehingga model bisa membedakan keduanya.
+fn render_with_context(path: &str, lines: &[&str], index: usize, context: usize) -> String {
+    let start = index.saturating_sub(context);
+    let end = (index + context + 1).min(lines.len());
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate().take(end).skip(start) {
+        let sep = if i == index { ':' } else { '-' };
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!("{path}{sep}{}{sep}{}", i + 1, line.trim_end()));
+    }
+    out
+}
 
 pub struct Grep;
 
@@ -32,7 +50,8 @@ impl Tool for Grep {
                 "glob": { "type": "string", "description": "Optional glob filter for file paths, e.g. **/*.rs" },
                 "case_insensitive": { "type": "boolean", "default": false },
                 "max_results": { "type": "integer", "default": 100 },
-                "offset": { "type": "integer", "description": "Skip this many matches before returning results. Use to page past the first 100 hits." }
+                "offset": { "type": "integer", "description": "Skip this many matches before returning results. Use to page past the first 100 hits." },
+                "context": { "type": "integer", "description": "Show N lines before and after each match (like grep -C). Useful to see a function body instead of a single line." }
             },
             "required": ["pattern"]
         })
@@ -63,6 +82,12 @@ impl Tool for Grep {
             // offset+max_results agar tidak menyusuri seluruh tree hanya untuk
             // membuang hasil awal.
             let stop_after = offset.saturating_add(max_results);
+            let context = args
+                .get("context")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(0)
+                .min(MAX_CONTEXT_LINES);
 
             let search_root = match args.get("path").and_then(|v| v.as_str()) {
                 Some(path) => jail::resolve(&ctx.cwd, path).map_err(AgentError::Permission)?,
@@ -85,9 +110,12 @@ impl Tool for Grep {
             let mut matches: Vec<String> = Vec::new();
             let mut truncated = false;
 
+            // Filter `.gitignore`: sumber kebenaran proyek, bukan daftar
+            // hardcoded. Best-effort — tanpa `.gitignore` jatuh ke default.
+            let ignore = common::WalkFilter::load(&ctx.cwd);
             'outer: for entry in WalkDir::new(&search_root)
                 .into_iter()
-                .filter_entry(|e| !common::skip_dir(e))
+                .filter_entry(|e| !ignore.is_ignored(e.path(), e.file_type().is_dir()))
                 .flatten()
             {
                 if !entry.file_type().is_file() {
@@ -108,9 +136,18 @@ impl Tool for Grep {
                     continue;
                 };
                 let shown = common::relative_display(&ctx.cwd, path);
-                for (line_number, line) in content.lines().enumerate() {
+                let lines: Vec<&str> = content.lines().collect();
+                for (line_number, line) in lines.iter().enumerate() {
                     if regex.is_match(line) {
-                        matches.push(format!("{shown}:{}:{}", line_number + 1, line.trim_end()));
+                        if context == 0 {
+                            matches.push(format!(
+                                "{shown}:{}:{}",
+                                line_number + 1,
+                                line.trim_end()
+                            ));
+                        } else {
+                            matches.push(render_with_context(&shown, &lines, line_number, context));
+                        }
                         if matches.len() >= stop_after {
                             truncated = true;
                             break 'outer;

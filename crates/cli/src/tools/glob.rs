@@ -62,9 +62,10 @@ impl Tool for Glob {
             let mut found: Vec<String> = Vec::new();
             let mut truncated = false;
 
+            let ignore = common::WalkFilter::load(&ctx.cwd);
             for entry in WalkDir::new(&search_root)
                 .into_iter()
-                .filter_entry(|e| !common::skip_dir(e))
+                .filter_entry(|e| !ignore.is_ignored(e.path(), e.file_type().is_dir()))
                 .flatten()
             {
                 if !entry.file_type().is_file() {

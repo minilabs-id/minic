@@ -184,15 +184,35 @@ async fn pump(
 
     let mut byte_stream = response.bytes_stream();
     let mut decoder = SseDecoder::new();
+    // `emit_choices` sudah melaporkan `finish_reason` yang sebenarnya
+    // (`tool_calls`, `length`, ...). Sentinel `[DONE]` hanya menandai akhir
+    // stream, jadi ia **tidak boleh** menimpa alasan itu dengan `Stop`:
+    // menimpanya membuat `finish_reason=length` tak terlihat oleh kernel
+    // sehingga respons terpotong diperlakukan sebagai selesai normal.
+    let mut saw_finish_reason = false;
 
     while let Some(chunk) = byte_stream.next().await {
         let chunk = chunk.map_err(|e| AgentError::Network(e.to_string()))?;
         for data in decoder.push(&chunk) {
             if data.trim() == "[DONE]" {
-                let _ = tx.send(Ok(ProviderEvent::Finish(FinishReason::Stop))).await;
+                // Hanya pakai `Stop` bila stream tidak pernah menyebut alasan.
+                if !saw_finish_reason {
+                    let _ = tx.send(Ok(ProviderEvent::Finish(FinishReason::Stop))).await;
+                }
                 continue;
             }
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&data) {
+                if value
+                    .get("choices")
+                    .and_then(|c| c.as_array())
+                    .is_some_and(|choices| {
+                        choices
+                            .iter()
+                            .any(|c| c.get("finish_reason").is_some_and(|r| !r.is_null()))
+                    })
+                {
+                    saw_finish_reason = true;
+                }
                 emit_choices(&value, tx).await;
             }
         }

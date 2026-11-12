@@ -116,6 +116,9 @@ Do not attempt to modify files.\n\n{}",
             max_tokens: None,
             context_window_tokens: Some(snapshot.context_tokens),
             keep_recent: minic_core::compaction::DEFAULT_KEEP_RECENT,
+            // Sub-agent read-only: tidak ada mutasi, jadi tidak ada yang perlu
+            // diverifikasi. Menjalankan verifikasi di sini hanya membakar step.
+            verify_command: None,
         };
         let mut on_event = |_event| {};
 

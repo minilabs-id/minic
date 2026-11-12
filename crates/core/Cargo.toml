@@ -20,3 +20,9 @@ once_cell = { version = "1", optional = true }
 [features]
 default = []
 tiktoken = ["dep:tiktoken-rs", "dep:once_cell"]
+
+# Test integrasi kernel butuh runtime + stream nyata. Ini **hanya** dev-dep:
+# kernel sendiri tetap bebas I/O dan bebas tokio di kode produksi.
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-stream = "0.1"

@@ -57,6 +57,8 @@ pub struct TuiDeps {
     pub tool_ctx: ToolContext,
     pub system: Option<String>,
     pub max_steps: u32,
+    /// Perintah verifikasi pasca-mutasi (lihat `RunOptions::verify_command`).
+    pub verify_command: Option<String>,
     pub mode: String,
     pub cwd: String,
     /// Persistensi streaming: kernel menyimpan snapshot tiap akhir turn.
@@ -75,6 +77,7 @@ struct TurnDeps {
     tool_ctx: ToolContext,
     system: Option<String>,
     max_steps: u32,
+    verify_command: Option<String>,
     persistence: Arc<SessionPersistence>,
 }
 
@@ -114,6 +117,7 @@ pub async fn run(deps: TuiDeps, initial: Vec<Message>) -> anyhow::Result<()> {
         tool_ctx,
         system,
         max_steps,
+        verify_command,
         mode,
         cwd,
         persistence,
@@ -127,6 +131,7 @@ pub async fn run(deps: TuiDeps, initial: Vec<Message>) -> anyhow::Result<()> {
         tool_ctx,
         system,
         max_steps,
+        verify_command,
         persistence: persistence.clone(),
     };
     // Kredensial hanya hidup di memori proses; field key di form tidak pernah
@@ -458,6 +463,7 @@ fn spawn_turn(
     let tool_ctx = deps.tool_ctx.clone();
     let system = deps.system.clone();
     let max_steps = deps.max_steps;
+    let verify_command = deps.verify_command.clone();
     let persistence = deps.persistence.clone();
     let agent_tx = agent_tx.clone();
     let result_tx = result_tx.clone();
@@ -470,6 +476,7 @@ fn spawn_turn(
             max_tokens: None,
             context_window_tokens: Some(snapshot.context_tokens),
             keep_recent: minic_core::compaction::DEFAULT_KEEP_RECENT,
+            verify_command: verify_command.clone(),
         };
         // Simpan prompt user sebelum panggilan model pertama: kalau provider
         // gagal/timeout, prompt tidak hilang dan sesi tetap bisa di-resume.

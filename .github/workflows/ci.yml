@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Jangan biarkan warning clippy menumpuk tanpa terlihat.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  gates:
+    name: gates (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml menentukan channel + komponen (rustfmt, clippy),
+      # jadi tidak perlu `dtolnay/rust-toolchain`.
+      - name: Show toolchain
+        run: rustc --version && cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --all-features
+
+  # Job terpisah tanpa fitur opsional: memastikan build default (tanpa
+  # tiktoken) tetap jalan — itu yang dipakai pengguna yang tidak butuh
+  # tokenizer presisi, dan build-nya harus tetap offline-friendly.
+  default-features:
+    name: build (no optional features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --no-default-features
+      - name: Test
+        run: cargo test --no-default-features --lib
+
+  # Smoke test: binary harus bisa dijalankan dan melaporkan versinya. Ini yang
+  # menangkap masalah tautan/runtime yang tidak terlihat saat kompilasi.
+  smoke:
+    name: smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release
+        run: cargo build --release
+      - name: Version
+        shell: bash
+        run: |
+          ./target/release/minic --version
+          ./target/release/minic --help > /dev/null

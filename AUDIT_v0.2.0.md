@@ -1,5 +1,22 @@
 # Evaluasi Mendalam & Rencana Perbaikan — v0.1.0 → v0.2.0
 
+> ## ✅ STATUS: SELURUH TEMUAN SUDAH DIPERBAIKI
+>
+> Semua temuan di dokumen ini (T1–T7) sudah ditutup pada v0.2.0. Ringkasan
+> hasil ada di `PLAN.md` bagian "v0.2.0 — enam fase berikutnya (selesai)".
+> Test naik dari 179 → **213**, dan setiap perbaikan punya test yang terbukti
+> load-bearing (mutasi balik ke kode lama membuat test gagal).
+>
+> Satu temuan **baru** ditemukan saat menulis test wire untuk T1 dan tidak
+> tercatat di audit awal: adapter `openai_compat.rs` selalu mengirim
+> `Finish(Stop)` saat melihat `[DONE]`, sehingga `finish_reason=length`
+> tertimpa dan gerbang truncation tidak akan pernah aktif untuk provider
+> nyata. Sudah diperbaiki dan dikunci `tests/fase_a_done_sentinel.rs`.
+>
+> Dokumen di bawah dipertahankan apa adanya sebagai catatan: ia menjelaskan
+> **mengapa** tiap perbaikan diperlukan, dan tetap berguna sebagai baseline
+> audit berikutnya.
+
 > Dokumen ini adalah hasil audit kode terhadap `minic` v0.1.0 (179 test, semua
 > gate hijau). Tujuannya bukan memuji yang sudah baik, melainkan menunjukkan
 > **apa yang membuat agen ini belum bisa dipercaya untuk kerja nyata** — lalu

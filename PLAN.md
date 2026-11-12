@@ -78,7 +78,74 @@ renderer linear yang memang memiliki submodul `json`/`text`, dan
 `hooks_impl.rs` hanyalah adapter tipis trait `AgentHooks`. Tidak diubah, agar
 tidak menimbulkan churn tanpa manfaat.
 
-Verifikasi: `cargo fmt --check` bersih, `cargo clippy --all-targets -- -D
+### v0.2.0 — enam fase berikutnya (selesai)
+
+Audit mendalam `AUDIT_v0.2.0.md` menemukan dua bug P0 dan lima kesenjangan
+P1–P3. Semuanya sudah diperbaiki, dan tiap perbaikan punya test yang
+**terbukti load-bearing** (mutasi balik ke kode lama membuat test gagal).
+
+**A. Integritas respons model (P0).** Dua bug yang saling memperkuat:
+
+1. `agent.rs` membuang `FinishReason` (`ProviderEvent::Finish(_) => {}`), jadi
+   respons yang dipotong `max_tokens` tidak bisa dibedakan dari respons
+   selesai. Ditambah `serde_json::from_str(&self.args).unwrap_or(Value::Null)`,
+   argumen JSON terpotong menjadi `Null` dan tool **tetap dieksekusi** —
+   muncul sebagai `bash: missing 'command'`, seolah model yang salah.
+   Sekarang: `finish_reason=length` + ada tool call → tool call dibuang,
+   teks parsial disimpan **tanpa** tool_call menggantung, dan
+   `AgentEvent::Note` menyebut sebabnya. Argumen rusak dilaporkan sebagai
+   `malformed tool arguments from model: <serde error>` + potongan argumen
+   mentah, **tanpa eksekusi**, dengan `ToolDecided{deny}`. Argumen kosong
+   (`Value::Null`) tetap sah untuk tool tanpa parameter.
+   `RunOutcome.truncated` menandai kejadian ini.
+2. **Bug ketiga ditemukan saat menulis test wire**: adapter
+   `openai_compat.rs` selalu mengirim `Finish(Stop)` saat melihat sentinel
+   `[DONE]`, sehingga `finish_reason=length` **selalu tertimpa** dan gerbang
+   truncation tidak pernah aktif untuk provider nyata. Kini `[DONE]` hanya
+   mengisi `Stop` bila stream belum pernah menyebut alasan sebenarnya.
+
+**B. Verification loop (P0).** `--verify <CMD>` / `MINIC_VERIFY` menjalankan
+perintah verifikasi lewat tool `bash` (bukan proses sendiri — sandbox, policy
+dan checkpoint tetap berlaku) setelah batch tool mutating **berhasil**, lalu
+hasilnya **disuntikkan ke history** sebagai tool result. Model melihat error
+compiler/test-nya sendiri dan diminta memperbaikinya; kegagalan juga muncul
+sebagai `AgentEvent::Note`. Verifikasi tidak jalan bila tidak ada mutasi
+(membaca berkas tidak perlu diverifikasi) atau bila `--verify` tidak diisi.
+`DEFAULT_SYSTEM` kini menyebut aturan verifikasi eksplisit dan melarang
+mengklaim sukses tanpa bukti perintah yang dijalankan.
+
+**C. Pencarian menghormati `.gitignore` (P1).** `IGNORED_DIRS` yang hanya
+berisi empat entri hardcoded diganti `common::WalkFilter`: memuat `.gitignore`
+bertingkat (batas kedalaman 8) plus `.git/info/exclude`, mendukung negasi
+(`!keep.log`), pola ber-anchor (`/foo`), pola dir-only (`dist/`), dan tetap
+memaksa `.git`/`target`/`node_modules`/`.minic` diabaikan apa pun isinya.
+Dipakai `grep` **dan** `glob`.
+
+**D. Tool read-only paralel (P1).** Loop `for call in calls` yang serial
+diganti `batches()`: deretan tool read-only berjalan bersamaan
+(`join_all`), sementara tool mutating dan tool tak dikenal tetap serial —
+satu modal approval pada satu waktu, dan urutan tulisan tidak boleh ditukar.
+Hasil dikembalikan menurut urutan call asli sehingga history deterministik.
+
+**E. Ergonomi biaya & sinyal (P2).** `--max-output-tokens` (dan
+`MINIC_MAX_OUTPUT_TOKENS`) diteruskan sampai ke body request provider
+(dibuktikan dengan server penangkap, bukan hanya `--help`); nilai 0 diabaikan.
+`read_file` mendeteksi biner (NUL di 8 KB pertama) dan menolak dengan pesan
+yang jelas, bukan `stream did not contain valid UTF-8`. `grep` mendapat
+`context: N` (baris sekitar, `:` untuk match dan `-` untuk konteks seperti
+`grep -C`), dibatasi 10 baris.
+
+**F. CI matrix.** `.github/workflows/ci.yml`: gate (fmt + clippy + test) di
+Ubuntu/Windows/macOS, job build tanpa fitur opsional, dan smoke test binary
+release.
+
+Verifikasi v0.2.0: `cargo fmt --check` bersih, `cargo clippy --all-targets
+--all-features -- -D warnings` bersih, `cargo test` → **213 test lulus**
+(naik dari 179). Smoke test nyata dengan binary release: agen menulis kode
+rusak → `cargo check` gagal → error compiler `E0308` sampai ke model pada
+request berikutnya.
+
+Verifikasi v0.1.0 (sebelumnya): `cargo fmt --check` bersih, `cargo clippy --all-targets -- -D
 warnings` bersih, `cargo test` → **175 test lulus** (termasuk render smoke test
 modal approval & panel output pada ukuran 20×5 hingga 120×40, test runtime
 `tests/m7_shell_guard.rs`, test scope kategori, test cap `result_detail`,

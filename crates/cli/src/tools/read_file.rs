@@ -61,6 +61,18 @@ impl Tool for ReadFile {
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize);
             let path = jail::resolve(&ctx.cwd, raw).map_err(AgentError::Permission)?;
+            // Deteksi biner sebelum `read_to_string`: tanpa ini pengguna melihat
+            // "stream did not contain valid UTF-8" yang tidak menjelaskan apa pun.
+            if let Some(size) = common::binary_probe(&path) {
+                return Ok(ToolResult::err(
+                    String::new(),
+                    "read_file",
+                    format!(
+                        "{} is a binary file ({size} bytes); read_file only handles UTF-8 text.                          Use bash (e.g. `xxd`/`file`) to inspect it.",
+                        common::relative_display(&ctx.cwd, &path)
+                    ),
+                ));
+            }
             let content = tokio::fs::read_to_string(&path)
                 .await
                 .map_err(|e| AgentError::Tool(format!("read_file {}: {e}", path.display())))?;
