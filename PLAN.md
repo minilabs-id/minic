@@ -2,6 +2,11 @@
 
 > **Rilis: v0.1.0** — 7 fase hardening selesai (lihat bagian akhir).
 >
+> **Audit mendalam v0.1.0 & rencana perbaikan v0.2.0:**
+> [`AUDIT_v0.2.0.md`](./AUDIT_v0.2.0.md) — menemukan 2 bug/gap P0 yang
+> diverifikasi empiris (tool call terpotong tetap dieksekusi; tidak ada
+> verification loop).
+>
 > Nama proyek & binary: **`minic`**.
 > Repo `minicode` (TypeScript/Bun) **tidak disentuh**; ia hanya dipakai sebagai
 > *referensi logika & baseline perilaku*. Tidak ada kode yang disalin.
