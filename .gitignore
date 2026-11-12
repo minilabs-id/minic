@@ -1,0 +1,8 @@
+/target
+/.minic/
+# Cargo.lock sengaja TIDAK diabaikan: ini binary, lock harus di-commit.
+*.pdb
+.DS_Store
+
+# Sisa debug lokal (UTF-16 dump dari PowerShell e2e), bukan sumber.
+e2e_task.txt

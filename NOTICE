@@ -1,0 +1,13 @@
+minic
+======
+
+This project is an independent, from-scratch native Rust implementation of a
+terminal coding agent. Its design was informed by studying the behaviour and
+architecture of the MIT-licensed project "minicode" (startupmini/minicode),
+which served as a behavioural baseline/reference only.
+
+No source code from minicode is copied here. minicode is MIT-licensed; this
+project is also MIT-licensed.
+
+Third-party Rust crates used are listed in each crate's Cargo.toml and are
+distributed under their own licenses.

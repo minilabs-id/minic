@@ -1,0 +1,49 @@
+[package]
+name = "minic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "minic — native Rust terminal coding agent (MVP skeleton)."
+default-run = "minic"
+
+[[bin]]
+name = "minic"
+path = "src/main.rs"
+
+[[bin]]
+name = "fake-mcp-server"
+path = "src/bin/fake_mcp_server.rs"
+
+[[bin]]
+name = "fake-lsp-server"
+path = "src/bin/fake_lsp_server.rs"
+
+[lib]
+name = "minic"
+path = "src/lib.rs"
+
+[dependencies]
+minic-core = { path = "../core", features = ["tiktoken"] }
+anyhow.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-stream = "0.1"
+reqwest.workspace = true
+futures-core.workspace = true
+futures-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+toml.workspace = true
+regex.workspace = true
+globset.workspace = true
+walkdir.workspace = true
+rusqlite.workspace = true
+ratatui.workspace = true
+unicode-width.workspace = true
+
+[dev-dependencies]
+proptest = "1"
+portable-pty = "0.8"

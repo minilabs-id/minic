@@ -1,0 +1,22 @@
+[package]
+name = "minic-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure, I/O-free agent kernel for minic (STATE/MODEL/ACTION/LOOP)."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+futures-core.workspace = true
+futures-util.workspace = true
+
+# Tokenizer presisi (BPE cl100k) — optional, mati secara default biar build
+# tetap cepat dan offline. Host `minic` mengaktifkannya lewat fitur `tiktoken`.
+tiktoken-rs = { version = "0.6", optional = true }
+once_cell = { version = "1", optional = true }
+
+[features]
+default = []
+tiktoken = ["dep:tiktoken-rs", "dep:once_cell"]

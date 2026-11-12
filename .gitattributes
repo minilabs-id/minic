@@ -1,0 +1,14 @@
+# Normalize line endings so a Windows checkout and a Linux CI checkout
+# produce the same bytes in git. Rust source is text; PowerShell stderr dumps
+# and fixtures are not.
+* text=auto eol=lf
+
+# Keep Windows scripts CRLF, they are executed by cmd.exe / PowerShell.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary — never touch.
+*.pdb binary
+*.exe binary
+*.db binary
