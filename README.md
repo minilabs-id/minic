@@ -348,8 +348,17 @@ Slash commands:
 | `/connect`, `/provider`, `/login` | base URL + API key form |
 | `/model`, `/models` | fetch and pick a model |
 | `/model <id>` | set the model id directly |
+| `/plan` | review saved plans in `.minic/plans/` |
+| `/verify <CMD>` | run the verification command now |
 | `/help` | show commands and keys |
 | `/quit`, `/exit` | leave the TUI |
+
+Typing `/` opens a floating suggestion list above the composer. It filters as
+you type, and `↑`/`↓` move the selection, `Tab` fills in the command (without
+running it), `Enter` fills it in too, and `Esc` closes the list before clearing
+the composer. Commands that take an argument insert a trailing space so you can
+type the argument straight away. The list closes as soon as you type a space,
+because that means you are typing an argument rather than a command name.
 
 Fullscreen interactive session with a deliberately small visual surface:
 

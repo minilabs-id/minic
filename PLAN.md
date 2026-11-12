@@ -139,6 +139,35 @@ yang jelas, bukan `stream did not contain valid UTF-8`. `grep` mendapat
 Ubuntu/Windows/macOS, job build tanpa fitur opsional, dan smoke test binary
 release.
 
+### v0.2.1 — autocomplete slash command di TUI
+
+Nama command dulu tersebar di tiga tempat (`run_command`, `push_help`, pesan
+`unknown command`), jadi menambah satu command berarti menyunting tiga string
+dan mudah lupa. `tui::slash` kini menjadi satu registry (nama, alias,
+keterangan, apakah butuh argumen), dan **hanya** `run_command` yang mengeksekusi
+— metadata dan eksekusi tidak bisa lagi menyimpang.
+
+Mengetik `/` membuka daftar saran mengambang di atas composer:
+
+- filter berdasarkan awalan, alias ikut dicari (`/models` → `model`);
+- `↑`/`↓` memindahkan pilihan, `Tab`/`Enter` mengisi, `Esc` menutup daftar
+  lebih dulu baru membersihkan composer (satu `Esc` tidak membuang ketikan);
+- command berargumen mengisi `/verify ` **dengan** spasi, command tanpa argumen
+  mengisi `/model` lengkap;
+- daftar tertutup begitu ada spasi (berarti sedang mengetik argumen), saat
+  kursor tidak di akhir, dan pada input multi-baris — supaya tidak menutupi
+  transcript saat mengetik prompt panjang.
+
+`/help` sekarang dibangun dari registry, jadi command baru otomatis muncul.
+
+Verifikasi: `cargo fmt --check` bersih, `cargo clippy --all-targets
+--all-features -- -D warnings` bersih, `cargo test` → **247 test lulus** (dari
+213). Termasuk unit test state machine autocomplete, render test popup pada
+20×6 sampai 120×40 (menangkap panic `.clamp()` di layar sempit), dan **PTY test
+nyata** yang membuktikan popup benar-benar tergambar di terminal — dengan
+replay escape sequence untuk membaca isi layar terakhir, bukan mencari substring
+di riwayat byte.
+
 Verifikasi v0.2.0: `cargo fmt --check` bersih, `cargo clippy --all-targets
 --all-features -- -D warnings` bersih, `cargo test` → **213 test lulus**
 (naik dari 179). Smoke test nyata dengan binary release: agen menulis kode

@@ -7,6 +7,7 @@
 //! - merender transcript/composer/status dan modal approval.
 
 pub mod app;
+pub mod slash;
 
 use crate::approval::{ApprovalChoice, ApprovalRequest};
 use crate::hooks_impl::FileHooks;
@@ -568,6 +569,12 @@ fn draw(frame: &mut ratatui::Frame, app: &mut App, cwd: &str) {
     draw_status(frame, chunks[1], app, cwd, hidden);
     draw_composer(frame, chunks[2], app, &composer);
 
+    // Autocomplete mengambang di atas composer. Digambar sebelum modal agar
+    // modal (approval/connect/picker) selalu menang bila keduanya aktif.
+    if let Some(completion) = app.completion_view() {
+        draw_completion(frame, area, chunks[2], &completion);
+    }
+
     if let Some(approval) = app.approval() {
         draw_approval(frame, area, approval);
     } else if let Some(output) = app.output_view() {
@@ -579,6 +586,95 @@ fn draw(frame: &mut ratatui::Frame, app: &mut App, cwd: &str) {
     }
 }
 
+/// Popup autocomplete slash command, mengambang tepat di atas composer.
+///
+/// Lebar mengikuti entri terpanjang (dibatasi), dan posisinya digeser ke atas
+/// bila tidak cukup ruang — supaya daftar tidak pernah menutupi composer atau
+/// keluar layar.
+fn draw_completion(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    composer_area: Rect,
+    completion: &app::CompletionView,
+) {
+    if completion.items.is_empty() {
+        return;
+    }
+    let dim = Style::default().add_modifier(Modifier::DIM);
+
+    // Lebar kolom nama (termasuk penanda "❯ ") dan lebar total. Keterangan
+    // boleh terpotong di layar sempit — nama command tidak boleh.
+    let name_col = completion
+        .items
+        .iter()
+        .map(|(name, _)| name.chars().count() + 2)
+        .max()
+        .unwrap_or(10);
+    let widest = completion
+        .items
+        .iter()
+        .map(|(name, about)| name.chars().count() + 2 + 2 + about.chars().count())
+        .max()
+        .unwrap_or(20);
+    // Lebar tidak boleh melebihi area: `.clamp(low, high)` panic bila low > high,
+    // jadi batas bawah diturunkan ke lebar area pada layar sangat sempit.
+    let max_width = area.width.saturating_sub(2).max(1);
+    let min_width = 30.min(max_width);
+    let width = (widest as u16 + 6).clamp(min_width, max_width);
+
+    let desired = completion.height().min(area.height.saturating_sub(1));
+    let y = composer_area.y.saturating_sub(desired);
+    let x = (area.x + 1).min(area.right().saturating_sub(width));
+    let popup = Rect::new(x, y, width, desired);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(dim)
+        .title(Span::styled(
+            " commands ",
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    // Sisakan satu baris di dalam border untuk petunjuk tombol.
+    let list_height = inner.height.saturating_sub(1);
+    let mut lines: Vec<TLine> = Vec::with_capacity(list_height as usize);
+    for (index, (name, about)) in completion.items.iter().enumerate() {
+        if index >= list_height as usize {
+            break;
+        }
+        let picked = index == completion.selected;
+        let marker = if picked { "❯ " } else { "  " };
+        let label = format!("{marker}/{name}");
+        // Ratakan keterangan pada kolom yang sama, lalu potong bila layar
+        // sempit agar tidak menimpa border.
+        let pad = name_col.saturating_sub(name.chars().count() + 2) + 2;
+        let text = format!("{label}{}{about}", " ".repeat(pad));
+        let style = if picked {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            dim
+        };
+        lines.push(TLine::from(Span::styled(text, style)));
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
+
+    // Baris petunjuk: ↑↓ pilih · Tab isi · Enter pilih · Esc tutup.
+    let hint = match completion.hint {
+        Some(arg) => format!("↑↓ pilih · Tab/Enter isi · Esc tutup · <{arg}>"),
+        None => "↑↓ pilih · Tab/Enter isi · Esc tutup".to_string(),
+    };
+    if inner.height > 0 {
+        let hint_row = Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1);
+        frame.render_widget(
+            Paragraph::new(hint).style(dim.add_modifier(Modifier::ITALIC)),
+            hint_row,
+        );
+    }
+}
 /// Panel baca-saja untuk hasil tool penuh. Mengisi hampir seluruh layar dan
 /// hanya menggulir teks — tidak ada state agen yang bisa berubah dari sini.
 fn draw_output(frame: &mut ratatui::Frame, area: Rect, output: &app::OutputView) {
@@ -1246,6 +1342,114 @@ mod output_render_tests {
         };
         terminal
             .draw(|frame| draw_output(frame, frame.area(), &view))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        for y in 0..buffer.area.height {
+            let mut row = String::new();
+            for x in 0..buffer.area.width {
+                row.push_str(buffer[(x, y)].symbol());
+            }
+            println!("|{row}|");
+        }
+    }
+
+    fn completion_view_for(selected: usize) -> app::CompletionView {
+        app::CompletionView {
+            items: crate::tui::slash::COMMANDS
+                .iter()
+                .map(|cmd| (cmd.name, cmd.about))
+                .collect(),
+            selected,
+            hint: Some("CMD"),
+        }
+    }
+
+    /// Popup harus bisa digambar di layar sekecil apa pun tanpa panic, dan
+    /// tidak boleh menimpa composer (baris tempat pengguna mengetik).
+    #[test]
+    fn completion_popup_renders_at_small_and_normal_sizes() {
+        for (width, height) in [(20u16, 6u16), (40, 10), (80, 24), (120, 40)] {
+            let mut terminal =
+                Terminal::new(TestBackend::new(width, height)).expect("test backend");
+            terminal
+                .draw(|frame| {
+                    let area = frame.area();
+                    let composer = Rect::new(area.x, area.bottom() - 1, area.width, 1);
+                    draw_completion(frame, area, composer, &completion_view_for(0));
+                })
+                .expect("draw must not panic");
+        }
+    }
+
+    #[test]
+    fn completion_popup_lists_commands_and_marks_the_selection() {
+        let mut terminal = Terminal::new(TestBackend::new(90, 24)).expect("test backend");
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let composer = Rect::new(area.x, area.bottom() - 1, area.width, 1);
+                draw_completion(frame, area, composer, &completion_view_for(1));
+            })
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let text: String = buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("/model"), "nama command terlihat: {text}");
+        assert!(text.contains("/connect"), "nama command terlihat: {text}");
+        assert!(text.contains("❯"), "penanda pilihan terlihat: {text}");
+        assert!(text.contains("Tab"), "petunjuk tombol terlihat: {text}");
+    }
+
+    /// Popup harus berada **di atas** composer, bukan menimpanya.
+    #[test]
+    fn completion_popup_sits_above_the_composer_row() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test backend");
+        // Baris composer terakhir kita isi penanda yang harus tetap terlihat.
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let composer = Rect::new(area.x, area.bottom() - 1, area.width, 1);
+                frame.render_widget(Paragraph::new("COMPOSER-HERE"), composer);
+                draw_completion(frame, area, composer, &completion_view_for(0));
+            })
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let last_row: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, buffer.area.height - 1)].symbol())
+            .collect();
+        assert!(
+            last_row.contains("COMPOSER-HERE"),
+            "popup menimpa composer: {last_row}"
+        );
+    }
+
+    #[test]
+    fn completion_popup_is_scroll_safe_when_items_exceed_space() {
+        // Layar pendek: popup harus memotong daftar, bukan menggambar keluar area.
+        let mut terminal = Terminal::new(TestBackend::new(40, 6)).expect("test backend");
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let composer = Rect::new(area.x, area.bottom() - 1, area.width, 1);
+                draw_completion(frame, area, composer, &completion_view_for(0));
+            })
+            .expect("draw must not panic");
+    }
+
+    /// Cetak layout untuk verifikasi manual (jalankan dengan `--nocapture`).
+    #[test]
+    fn print_completion_layout() {
+        let mut terminal = Terminal::new(TestBackend::new(74, 18)).expect("test backend");
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let composer = Rect::new(area.x, area.bottom() - 1, area.width, 1);
+                frame.render_widget(Paragraph::new("❯ /mo"), composer);
+                draw_completion(frame, area, composer, &completion_view_for(0));
+            })
             .expect("draw");
         let buffer = terminal.backend().buffer();
         for y in 0..buffer.area.height {

@@ -9,6 +9,7 @@
 
 use crate::approval::{ApprovalChoice, Category};
 use crate::render::text::{display_width, format_duration, preview_line, sanitize, summarize_tool};
+use crate::tui::slash::{COMMANDS, Completion};
 use minic_core::events::{AgentEvent, DecisionKind};
 use minic_core::tokens::estimate_messages;
 use minic_core::types::{Message, Role};
@@ -259,6 +260,24 @@ pub struct ComposerView {
     pub height: usize,
 }
 
+/// Isi popup autocomplete. Dipisah dari `App` agar renderer tidak perlu tahu
+/// soal state filter — ia hanya menggambar apa yang sudah dipilih.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionView {
+    /// (nama command tanpa garis miring, keterangan).
+    pub items: Vec<(&'static str, &'static str)>,
+    pub selected: usize,
+    /// Petunjuk argumen untuk entri terpilih, mis. `CMD`.
+    pub hint: Option<&'static str>,
+}
+
+impl CompletionView {
+    /// Tinggi popup: satu baris per entri + satu baris petunjuk.
+    pub fn height(&self) -> u16 {
+        (self.items.len() as u16).saturating_add(1)
+    }
+}
+
 /// Panel baca-saja untuk hasil tool penuh. Tidak pernah mengubah state agen;
 /// hanya membungkus teks yang sudah diterima UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -300,6 +319,8 @@ pub struct App {
     picker: Option<PickerView>,
     /// Provider + model siap; composer boleh mengirim task.
     ready: bool,
+    /// Autocomplete slash command yang mengambang di atas composer.
+    completion: Completion,
     spinner: u8,
 }
 
@@ -333,6 +354,7 @@ impl App {
             // Default true agar state machine tetap bisa diuji tanpa driver.
             // Driver memanggil `set_ready` sesuai status provider.
             ready: true,
+            completion: Completion::new(),
             spinner: 0,
         }
     }
@@ -399,6 +421,23 @@ impl App {
 
     pub fn ready(&self) -> bool {
         self.ready
+    }
+
+    /// Daftar autocomplete yang harus dirender, bila terbuka.
+    pub fn completion_view(&self) -> Option<CompletionView> {
+        if !self.completion.is_open() {
+            return None;
+        }
+        Some(CompletionView {
+            items: self
+                .completion
+                .visible()
+                .into_iter()
+                .map(|cmd| (cmd.name, cmd.about))
+                .collect(),
+            selected: self.completion.selected_index(),
+            hint: self.completion.hint(),
+        })
     }
 
     pub fn set_ready(&mut self, ready: bool) {
@@ -641,6 +680,13 @@ impl App {
             }
             _ if self.busy => Action::None,
             Key::Enter => {
+                // Daftar autocomplete terbuka: Enter memilih entri, bukan
+                // mengirim. Tanpa ini, menekan Enter saat daftar tampil akan
+                // menjalankan command yang salah/ setengah jadi.
+                if self.completion.is_open() {
+                    self.accept_completion();
+                    return Action::None;
+                }
                 let text = self.input.trim().to_string();
                 if text.is_empty() {
                     // Composer kosong: buka hasil tool terakhir (baca-saja).
@@ -708,10 +754,18 @@ impl App {
                 Action::None
             }
             Key::Up => {
+                if self.completion.is_open() {
+                    self.completion.move_by(-1);
+                    return Action::None;
+                }
                 self.history_prev();
                 Action::None
             }
             Key::Down => {
+                if self.completion.is_open() {
+                    self.completion.move_by(1);
+                    return Action::None;
+                }
                 self.history_next();
                 Action::None
             }
@@ -723,9 +777,20 @@ impl App {
                 self.cursor = self.line_end();
                 Action::None
             }
-            Key::Tab => Action::None,
+            Key::Tab => {
+                // Tab menyelesaikan nama command tanpa menjalankannya.
+                if self.completion.is_open() {
+                    self.accept_completion();
+                }
+                Action::None
+            }
             Key::Esc => {
-                if !self.input.is_empty() {
+                // Esc menutup daftar lebih dulu; baru Esc kedua membersihkan
+                // composer. Kalau tidak, Esc saat daftar terbuka membuang teks
+                // yang sudah diketik.
+                if self.completion.is_open() {
+                    self.completion.close();
+                } else if !self.input.is_empty() {
                     self.input.clear();
                     self.cursor = 0;
                     self.history_index = None;
@@ -776,6 +841,23 @@ impl App {
         self.insert_text(&cleaned);
     }
 
+    /// Terima entri autocomplete yang sedang dipilih.
+    ///
+    /// Command berargumen: isi `/name ` dan biarkan daftar tertutup, supaya
+    /// pengguna langsung mengetik argumennya. Command tanpa argumen: isi
+    /// `/name` lengkap dan tutup daftar — Enter berikutnya menjalankannya.
+    fn accept_completion(&mut self) {
+        let Some(command) = self.completion.selected_command() else {
+            self.completion.close();
+            return;
+        };
+        let text = command.insert_text();
+        self.input = text;
+        self.cursor = self.input.len();
+        self.completion.close();
+        self.reset_history_nav();
+    }
+
     fn run_command(&mut self, text: &str) -> Action {
         let mut parts = text.splitn(2, char::is_whitespace);
         let command = parts.next().unwrap_or("");
@@ -794,8 +876,12 @@ impl App {
                 Action::Quit
             }
             _ => {
+                // Saran diambil dari registry, jadi tidak bisa basi saat
+                // command baru ditambahkan.
+                let names: Vec<String> = COMMANDS.iter().map(|c| format!("/{}", c.name)).collect();
                 self.note(format!(
-                    "unknown command {command} · try /connect, /model, /help"
+                    "unknown command {command} · try {}",
+                    names.join(" · ")
                 ));
                 Action::None
             }
@@ -804,9 +890,19 @@ impl App {
 
     fn push_help(&mut self) {
         self.push_blank();
-        self.push_note("commands: /connect (provider + key) · /model [id] · /help · /quit");
+        // Daftar command dibangun dari registry: menambah command otomatis
+        // muncul di bantuan, tanpa menyunting string di sini.
+        let listing = COMMANDS
+            .iter()
+            .map(|c| match c.args {
+                crate::tui::slash::ArgKind::None => format!("/{}", c.name),
+                crate::tui::slash::ArgKind::Required(arg) => format!("/{} <{arg}>", c.name),
+            })
+            .collect::<Vec<_>>()
+            .join(" · ");
+        self.push_note(format!("commands: {listing}"));
         self.push_note(
-            "keys: Enter submit · Ctrl+J newline · ↑↓ history · PgUp/PgDn scroll · Ctrl+C cancel/quit",
+            "keys: Enter submit · Ctrl+J newline · ↑↓ history/autocomplete · Tab complete · PgUp/PgDn scroll · Ctrl+C cancel/quit",
         );
         self.push_note(
             "approval: y once · a this tool · c whole category · n deny · ? full arguments",
@@ -1424,6 +1520,17 @@ impl App {
         self.reset_history_nav();
         self.input.insert_str(self.cursor, text);
         self.cursor += text.len();
+        self.sync_completion();
+    }
+
+    /// Segarkan daftar autocomplete setelah composer berubah. Satu tempat
+    /// supaya setiap jalur mutasi (ketik, hapus, tempel, history) konsisten.
+    fn sync_completion(&mut self) {
+        if self.busy || self.approval.is_some() {
+            self.completion.close();
+            return;
+        }
+        self.completion.refresh(&self.input, self.cursor);
     }
 
     fn backspace(&mut self) {
@@ -1437,6 +1544,7 @@ impl App {
             self.input.replace_range(self.cursor - n..self.cursor, "");
             self.cursor -= n;
         }
+        self.sync_completion();
     }
 
     fn delete_forward(&mut self) {
@@ -1449,6 +1557,7 @@ impl App {
             self.input
                 .replace_range(self.cursor..self.cursor + c.len_utf8(), "");
         }
+        self.sync_completion();
     }
 
     fn move_left(&mut self) {
@@ -1494,6 +1603,7 @@ impl App {
             .unwrap_or(0);
         self.input.replace_range(cut..self.cursor, "");
         self.cursor = cut;
+        self.sync_completion();
     }
 
     fn history_prev(&mut self) {
@@ -2196,5 +2306,146 @@ mod ctrl_c_semantics_tests {
         app.cancel_turn();
         assert!(!app.busy());
         assert!(!app.should_quit());
+    }
+
+    // ---- autocomplete slash command -------------------------------------
+
+    fn type_str(app: &mut App, text: &str) {
+        for c in text.chars() {
+            app.handle_key(Key::Char(c));
+        }
+    }
+
+    fn items(app: &App) -> Vec<&'static str> {
+        app.completion_view()
+            .map(|v| v.items.iter().map(|(name, _)| *name).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn typing_slash_opens_the_suggestion_list() {
+        let mut app = App::new("test");
+        type_str(&mut app, "/");
+        let list = items(&app);
+        assert!(!list.is_empty(), "daftar harus terbuka setelah '/'");
+        assert!(list.contains(&"model"));
+    }
+
+    #[test]
+    fn typing_filters_the_suggestion_list() {
+        let mut app = App::new("test");
+        type_str(&mut app, "/co");
+        assert_eq!(items(&app), vec!["connect"]);
+    }
+
+    #[test]
+    fn enter_accepts_the_selection_instead_of_submitting() {
+        let mut app = App::new("test");
+        type_str(&mut app, "/");
+        // Pilih entri pertama, lalu Enter harus mengisi composer.
+        assert_eq!(app.handle_key(Key::Enter), Action::None);
+        assert_eq!(
+            app.input(),
+            "/model",
+            "Enter memilih entri, bukan mengirim prompt"
+        );
+        assert_eq!(items(&app), Vec::<&str>::new(), "daftar ditutup");
+    }
+
+    #[test]
+    fn tab_completes_without_running_the_command() {
+        let mut app = App::new("test");
+        type_str(&mut app, "/ver");
+        assert_eq!(app.handle_key(Key::Tab), Action::None);
+        // Command berargumen: harus ada spasi agar bisa langsung mengetik argumen.
+        assert_eq!(app.input(), "/verify ");
+        assert!(items(&app).is_empty());
+    }
+
+    #[test]
+    fn arrows_move_the_selection_without_touching_history() {
+        let mut app = App::new("test");
+        app.load_history(vec![Message::user("earlier prompt")]);
+        type_str(&mut app, "/");
+        let first = app.completion_view().expect("terbuka").selected;
+        assert_eq!(app.handle_key(Key::Down), Action::None);
+        let second = app.completion_view().expect("terbuka").selected;
+        assert_ne!(first, second, "Down memindahkan pilihan");
+        // Composer tidak boleh berubah menjadi entri history.
+        assert_eq!(app.input(), "/");
+    }
+
+    #[test]
+    fn esc_closes_the_list_before_clearing_the_input() {
+        let mut app = App::new("test");
+        type_str(&mut app, "/mo");
+        assert!(!items(&app).is_empty());
+        // Esc pertama: hanya menutup daftar, teks tetap ada.
+        assert_eq!(app.handle_key(Key::Esc), Action::None);
+        assert!(items(&app).is_empty(), "daftar ditutup");
+        assert_eq!(app.input(), "/mo", "teks tidak ikut terhapus");
+        // Esc kedua: baru membersihkan composer.
+        assert_eq!(app.handle_key(Key::Esc), Action::None);
+        assert!(app.input().is_empty());
+    }
+
+    #[test]
+    fn space_after_the_command_closes_the_list() {
+        let mut app = App::new("test");
+        type_str(&mut app, "/model ");
+        assert!(items(&app).is_empty(), "spasi berarti mulai argumen");
+    }
+
+    #[test]
+    fn completing_a_real_command_still_runs_it() {
+        // Bukti tidak ada regresi: setelah autocomplete mengisi, Enter dengan
+        // daftar tertutup menjalankan command seperti biasa.
+        let mut app = App::new("test");
+        type_str(&mut app, "/");
+        app.handle_key(Key::Enter); // isi "/model"
+        let action = app.handle_key(Key::Enter);
+        assert!(
+            matches!(action, Action::Command(Command::Model(_))),
+            "dapat: {action:?}"
+        );
+    }
+
+    #[test]
+    fn ordinary_prompt_submits_even_with_slash_elsewhere() {
+        let mut app = App::new("test");
+        type_str(&mut app, "fix src/main.rs now");
+        assert!(items(&app).is_empty());
+        assert!(matches!(app.handle_key(Key::Enter), Action::Submit(_)));
+    }
+
+    #[test]
+    fn backspace_closes_the_list_when_the_slash_is_gone() {
+        let mut app = App::new("test");
+        type_str(&mut app, "/");
+        assert!(!items(&app).is_empty());
+        app.handle_key(Key::Backspace);
+        assert!(items(&app).is_empty(), "tanpa '/' daftar harus tertutup");
+    }
+
+    #[test]
+    fn help_lists_every_registered_command() {
+        let mut app = App::new("test");
+        type_str(&mut app, "/help");
+        app.handle_key(Key::Enter);
+        let notes: Vec<String> = app
+            .transcript()
+            .iter()
+            .filter_map(|line| match line {
+                Line::Note(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        for cmd in crate::tui::slash::COMMANDS {
+            assert!(
+                notes.iter().any(|n| n.contains(&format!("/{}", cmd.name))),
+                "/{} tidak muncul di bantuan: {notes:?}",
+                cmd.name
+            );
+        }
     }
 }
