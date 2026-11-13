@@ -164,6 +164,26 @@ ruang transcript. Keterangan tetap disimpan di registry dan dipakai `/help`:
 
 `/help` sekarang dibangun dari registry, jadi command baru otomatis muncul.
 
+### Layar awal bersih
+
+`draw_welcome` dulu menampilkan dua baris penjelasan command ("Type a task and
+press Enter", "Ctrl+J newline · ↑ history …"). Teks itu muncul **setiap sesi**
+dan harus dilewati mata berulang kali, padahal isinya sama dengan `/help`.
+Sekarang layar awal hanya: nama, baris `model · ctx N%`, dan direktori kerja.
+Satu-satunya petunjuk yang tersisa adalah `/connect`, dan hanya bila belum ada
+provider — tanpa itu pengguna buntu di sesi pertama.
+
+### Test flaky ditemukan & diperbaiki
+
+`fase_d_parallel::read_only_calls_run_concurrently` gagal acak (~25%) karena
+memakai ambang waktu dinding (`<550ms` untuk 3×200ms). Di mesin yang sedang
+sibuk ambang itu tembus. Bukti paralelisme sebenarnya sudah ada di `peak >= 2`
+(penghitung konkurensi maksimum), jadi ambang waktu diganti batas bawah longgar
+`>= 150ms` yang hanya menjaga agar ketiga pembacaan benar-benar berjalan.
+
+Dibuktikan masih menjaga: `run_parallel` diubah menjadi serial (`for … .await`)
+→ test gagal; `join_all` dikembalikan → lulus.
+
 Verifikasi: `cargo fmt --check` bersih, `cargo clippy --all-targets
 --all-features -- -D warnings` bersih, `cargo test` → **247 test lulus** (dari
 213). Termasuk unit test state machine autocomplete, render test popup pada

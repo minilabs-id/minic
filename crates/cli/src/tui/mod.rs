@@ -735,8 +735,10 @@ fn draw_transcript(
 
 fn draw_welcome(frame: &mut ratatui::Frame, area: Rect, app: &App, cwd: &str) {
     let dim = Style::default().add_modifier(Modifier::DIM);
-    let just = dim;
-    let text = Text::from(vec![
+    // Layar awal sengaja bersih: hanya identitas dan konteks kerja. Tidak ada
+    // penjelasan command di sini — itu tugas `/help`, dan menampilkannya terus
+    // di awal hanya menambah teks yang harus dilewati mata setiap sesi.
+    let mut lines = vec![
         TLine::raw(""),
         TLine::styled("  minic", Style::default().add_modifier(Modifier::BOLD)),
         TLine::styled(
@@ -745,28 +747,17 @@ fn draw_welcome(frame: &mut ratatui::Frame, area: Rect, app: &App, cwd: &str) {
                 truncate(&sanitize(app.status()), 60),
                 app.context_percent()
             ),
-            just,
+            dim,
         ),
-        TLine::styled(format!("  {}", truncate(&sanitize(cwd), 72)), just),
-        TLine::raw(""),
-        TLine::styled(
-            if app.ready() {
-                "  Type a task and press Enter."
-            } else {
-                "  Connect a provider: /connect   then /model"
-            },
-            just,
-        ),
-        TLine::styled(
-            if app.ready() {
-                "  Ctrl+J newline · ↑ history · PgUp scroll · Ctrl+C cancel · Ctrl+D quit"
-            } else {
-                "  /connect base URL + API key · /model pick or type an id · /help"
-            },
-            just,
-        ),
-    ]);
-    frame.render_widget(Paragraph::new(text), area);
+        TLine::styled(format!("  {}", truncate(&sanitize(cwd), 72)), dim),
+    ];
+    // Satu petunjuk saja, dan hanya bila belum siap: tanpa provider pengguna
+    // akan buntu kalau tidak diberi tahu langkah pertamanya.
+    if !app.ready() {
+        lines.push(TLine::raw(""));
+        lines.push(TLine::styled("  /connect", dim));
+    }
+    frame.render_widget(Paragraph::new(Text::from(lines)), area);
 }
 
 fn draw_status(frame: &mut ratatui::Frame, area: Rect, app: &App, cwd: &str, hidden: HiddenLines) {

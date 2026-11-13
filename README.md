@@ -362,6 +362,10 @@ insert a trailing space so you can type the argument straight away. The list
 closes as soon as you type a space, because that means you are typing an
 argument rather than a command name.
 
+The opening screen is deliberately bare: just the model/context line and the
+working directory. Command help lives in `/help`, not on the start screen, so
+every session begins without text you have to read past.
+
 Fullscreen interactive session with a deliberately small visual surface:
 
 - the transcript follows the tail and keeps the newest content above the

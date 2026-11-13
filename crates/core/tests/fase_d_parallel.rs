@@ -221,10 +221,13 @@ async fn read_only_calls_run_concurrently() {
         "tool read-only harus berjalan bersamaan (peak={})",
         h.peak.load(Ordering::SeqCst)
     );
-    // Serial akan butuh >600ms; paralel jauh lebih cepat.
+    // Bukti paralelisme diambil dari `peak` di atas, bukan dari waktu dinding:
+    // ambang waktu membuat test gagal acak di mesin yang sedang sibuk. Waktu
+    // tetap dicetak untuk diagnosa, dan batas longgarnya hanya menjaga agar
+    // eksekusi nyata-benar terjadi tiga kali, bukan nol kali.
     assert!(
-        elapsed < Duration::from_millis(550),
-        "tiga baca 200ms harus selesai <550ms, butuh {elapsed:?}"
+        elapsed >= Duration::from_millis(150),
+        "tiga baca 200ms tidak mungkin selesai {elapsed:?}"
     );
 }
 
