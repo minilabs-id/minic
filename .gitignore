@@ -6,3 +6,7 @@
 
 # Sisa debug lokal (UTF-16 dump dari PowerShell e2e), bukan sumber.
 e2e_task.txt
+
+# Artefak rilis lokal (zip dibangun ulang tiap rilis, diunggah ke GitHub
+# Release). Tidak perlu masuk repo.
+/dist/

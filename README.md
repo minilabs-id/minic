@@ -2,6 +2,11 @@
 
 **v0.3.1** — Native Rust terminal coding agent.
 
+```powershell
+winget install ParticleAI.minic
+minic
+```
+
 This repository implements milestones **M0–M6** plus a reliability upscale
 (streaming session persistence, provider retry/backoff, auto context-window
 detection, conditional tool registration, meaningful exit codes) and an

@@ -122,3 +122,89 @@ fn tui_enters_and_restores_alternate_screen() {
     assert!(answered, "turn fake harus selesai dan menampilkan jawaban");
     assert!(restored, "TUI harus memulihkan layar setelah Ctrl+C");
 }
+
+/// Ketik `minic` polos di terminal harus membuka TUI.
+///
+/// Dulu pengguna harus tahu flag `--tui`; tanpa itu binary keluar dengan
+/// "no prompt provided". Untuk tool yang dipasang lewat `winget` dan dipanggil
+/// sebagai `minic`, perilaku itu salah: perintah tanpa argumen adalah cara
+/// paling wajar memakainya.
+#[test]
+fn bare_invocation_opens_the_tui() {
+    let root = temp_root("bare");
+
+    let pty_system = native_pty_system();
+    let Ok(pair) = pty_system.openpty(PtySize {
+        rows: 30,
+        cols: 100,
+        pixel_width: 0,
+        pixel_height: 0,
+    }) else {
+        eprintln!("skip: openpty failed on this host");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+
+    // Tanpa `--tui`: hanya `--fake` (agar tidak butuh provider) dan `--cwd`.
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_minic"));
+    command.args(["--fake", "--cwd"]);
+    command.arg(&root);
+    command.cwd(&root);
+
+    let Ok(mut child) = pair.slave.spawn_command(command) else {
+        eprintln!("skip: spawn_command failed on this host");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    drop(pair.slave);
+
+    let mut reader = pair.master.try_clone_reader().expect("pty reader");
+    let mut writer = pair.master.take_writer().expect("pty writer");
+    let buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
+
+    let reader_buffer = buffer.clone();
+    let reader_thread = std::thread::spawn(move || {
+        let mut chunk = [0u8; 4096];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => reader_buffer.lock().unwrap().extend_from_slice(&chunk[..n]),
+                Err(_) => break,
+            }
+        }
+    });
+
+    let entered = wait_until(&buffer, b"\x1b[?1049h", Duration::from_secs(15));
+
+    // Harus benar-benar TUI, bukan pesan error "no prompt provided".
+    let data = buffer.lock().unwrap().clone();
+    let text = String::from_utf8_lossy(&data);
+    assert!(
+        !text.contains("no prompt provided"),
+        "`minic` polos harus membuka TUI, bukan meminta prompt: {text}"
+    );
+
+    let _ = writer.write_all(&[0x03]);
+    let _ = writer.flush();
+    let _ = wait_until(&buffer, b"\x1b[?1049l", Duration::from_secs(10));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            _ => {
+                let _ = child.kill();
+                break;
+            }
+        }
+    }
+    drop(reader_thread);
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(
+        entered,
+        "`minic` tanpa argumen harus masuk alternate screen"
+    );
+}

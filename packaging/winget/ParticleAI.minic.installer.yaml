@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+# Installer manifest — how winget actually installs the tool.
+#
+# `zip` + `portable` dipilih, bukan MSI: minic adalah satu binary CLI tanpa
+# registry, service, atau config sistem. Portable berarti winget mengekstrak
+# `minic.exe` dan membuat shim di PATH — tanpa elevasi, tanpa entri uninstall
+# yang setengah jadi, dan `winget upgrade` tetap bekerja.
+PackageIdentifier: ParticleAI.minic
+PackageVersion: 0.3.1
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: minic.exe
+    PortableCommandAlias: minic
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/minilabs-id/minic/releases/download/v0.3.1/minic-0.3.1-x86_64-pc-windows-msvc.zip
+    InstallerSha256: 5A8FA1D4312E00F4F4004505430DC5B2181AFBD9D2472DD11BD3747CC6A7C2D7
+    InstallerLocale: en-US
+ManifestType: installer
+ManifestVersion: 1.12.0

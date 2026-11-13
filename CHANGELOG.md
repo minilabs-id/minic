@@ -6,6 +6,30 @@ All notable changes to minic are documented here. The format follows
 
 ## [0.3.1] — 2026-11-13
 
+### Added
+
+- **`minic` with no arguments now opens the TUI.** Previously a bare invocation
+  exited with "no prompt provided" unless you knew to pass `--tui`, which made
+  the most natural way to run an installed `minic` fail. Bare `minic` on an
+  interactive terminal now starts the TUI; piping a prompt or running without a
+  TTY keeps the non-interactive path. `--no-tui` forces non-interactive mode for
+  scripts.
+- **MIT `LICENSE` file**, and package metadata (`repository`, `readme`,
+  `keywords`, `categories`, `authors`) so the crate and the winget manifest have
+  a real license to point at.
+- **Windows packaging**: `packaging/winget/` holds a three-file winget manifest
+  using `InstallerType: zip` + `NestedInstallerType: portable`, so
+  `winget install ParticleAI.minic` needs no administrator rights and puts
+  `minic` on `PATH`. Build the archive with the release zip and update the
+  SHA256 per release.
+
+### Changed
+
+- **`fake-mcp-server` and `fake-lsp-server` are now gated behind the
+  `test-servers` feature.** They are test fixtures; previously any release build
+  shipped them alongside `minic`.
+
+
 Closes every finding from the work-mode audit (`AUDIT_work_mode.md`, W1–W10).
 Each fix is guarded by a test that was proven load-bearing by mutation: revert
 the code and the test fails.

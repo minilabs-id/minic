@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.12.0.schema.json
+# Manifest version — package identity & metadata.
+# Disubmit ke microsoft/winget-pkgs di
+# manifests/p/ParticleAI/minic/<version>/
+PackageIdentifier: ParticleAI.minic
+PackageVersion: 0.3.1
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.12.0

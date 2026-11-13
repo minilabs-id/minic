@@ -3,20 +3,30 @@ name = "minic"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "minic — native Rust terminal coding agent (MVP skeleton)."
+description = "Native Rust terminal coding agent"
 default-run = "minic"
+authors = ["Particle AI"]
+repository = "https://github.com/minilabs-id/minic"
+homepage = "https://github.com/minilabs-id/minic"
+readme = "../../README.md"
+keywords = ["cli", "agent", "llm", "tui", "coding-assistant"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "minic"
 path = "src/main.rs"
 
+# Server palsu untuk test PTY. Di-gate di balik feature agar tidak ikut
+# ter-build saat rilis dan tidak masuk ke installer Windows.
 [[bin]]
 name = "fake-mcp-server"
 path = "src/bin/fake_mcp_server.rs"
+required-features = ["test-servers"]
 
 [[bin]]
 name = "fake-lsp-server"
 path = "src/bin/fake_lsp_server.rs"
+required-features = ["test-servers"]
 
 [lib]
 name = "minic"
@@ -47,3 +57,9 @@ unicode-width.workspace = true
 [dev-dependencies]
 proptest = "1"
 portable-pty = "0.8"
+
+[features]
+# Server palsu (MCP/LSP) untuk test. Tidak pernah aktif di build rilis, jadi
+# tidak ikut masuk installer Windows.
+default = []
+test-servers = []

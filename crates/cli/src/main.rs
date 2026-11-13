@@ -1,6 +1,6 @@
 //! Binary `minic` — CLI tipis di atas kernel.
 
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -80,9 +80,14 @@ struct Cli {
     #[arg(long)]
     save_key: bool,
 
-    /// Buka TUI interaktif (butuh TTY).
+    /// Buka TUI interaktif (butuh TTY). Sekarang default bila dijalankan di
+    /// terminal tanpa prompt, jadi flag ini biasanya tidak perlu.
     #[arg(long)]
     tui: bool,
+
+    /// Paksa mode non-interaktif meski TTY tersedia (untuk skrip/otomasi).
+    #[arg(long, conflicts_with = "tui")]
+    no_tui: bool,
 
     /// Sandbox untuk `bash`: off|auto|docker|bwrap|sandbox-exec|strict.
     #[arg(long)]
@@ -212,9 +217,15 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // TUI hanya mungkin dengan TTY. Diputuskan lebih awal karena policy perlu
-    // tahu jalur approval (modal channel vs prompt terminal).
-    let tui_active = cli.tui && minic::approval::is_interactive();
+    // TUI adalah mode default saat dijalankan di terminal interaktif tanpa
+    // prompt. Pengguna seharusnya cukup mengetik `minic`; memaksa `--tui`
+    // membuat pengalaman pertama selalu error "no prompt provided".
+    //
+    // Non-interaktif (pipe, CI, tanpa TTY) tetap non-TUI: di sana tidak ada
+    // modal untuk approval, jadi membuka TUI akan gagal atau menggantung.
+    let wants_prompt = cli.prompt.is_some() || !std::io::stdin().is_terminal();
+    let tui_default = !wants_prompt && !cli.no_tui;
+    let tui_active = (cli.tui || tui_default) && minic::approval::is_interactive();
     if cli.tui && !tui_active {
         eprintln!("warning: --tui ignored (no TTY); running non-interactive");
     }
