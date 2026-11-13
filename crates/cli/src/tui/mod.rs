@@ -610,7 +610,7 @@ fn draw_completion(
     let widest = completion
         .items
         .iter()
-        .map(|name| name.chars().count() + 3)
+        .map(|name| name.chars().count())
         .max()
         .unwrap_or(10);
     let max_width = area.width.saturating_sub(1).max(1);
@@ -625,19 +625,22 @@ fn draw_completion(
     // akan tercampur dengan nama command.
     frame.render_widget(Clear, popup);
 
+    // Pilihan dibedakan **hanya** lewat warna (tanpa panah/penanda) dan nama
+    // ditampilkan apa adanya tanpa garis miring.
     let lines: Vec<TLine> = completion
         .items
         .iter()
         .enumerate()
         .map(|(index, name)| {
             let picked = index == completion.selected;
-            let marker = if picked { "❯ " } else { "  " };
             let style = if picked {
-                Style::default().add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 dim
             };
-            TLine::from(Span::styled(format!("{marker}/{name}"), style))
+            TLine::from(Span::styled(*name, style))
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), popup);
@@ -1364,14 +1367,56 @@ mod output_render_tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(text.contains("/model"), "nama command terlihat: {text}");
-        assert!(text.contains("/connect"), "nama command terlihat: {text}");
-        assert!(text.contains("❯"), "penanda pilihan terlihat: {text}");
-        // Daftar polos: tidak boleh ada border, judul, atau baris petunjuk.
-        for absent in ["│", "─", "commands", "Tab", "Esc", "↑↓"] {
+        // Nama tampil apa adanya: tanpa garis miring, tanpa panah.
+        assert!(text.contains("model"), "nama command terlihat: {text}");
+        assert!(text.contains("connect"), "nama command terlihat: {text}");
+        for absent in [
+            "❯", "/model", "/connect", "│", "─", "commands", "Tab", "Esc", "↑↓",
+        ] {
             assert!(
                 !text.contains(absent),
                 "daftar harus polos, tapi memuat {absent:?}: {text}"
+            );
+        }
+
+        // Pilihan dibedakan **hanya** lewat warna: baris terpilih memakai warna
+        // aksen, baris lain tidak. Tidak ada penanda/panah sama sekali.
+        let named_rows: Vec<(u16, String, ratatui::style::Color)> = (0..buffer.area.height)
+            .map(|row| {
+                // Ambil warna sel pertama yang berisi karakter: kolom 0 adalah
+                // margin kosong hasil `Clear`, bukan teks daftar.
+                let mut fg = ratatui::style::Color::Reset;
+                let mut found = false;
+                let mut line = String::new();
+                for x in 0..buffer.area.width {
+                    let cell = &buffer[(x, row)];
+                    if !found && cell.symbol() != " " {
+                        fg = cell.fg;
+                        found = true;
+                    }
+                    line.push_str(cell.symbol());
+                }
+                (row, line.trim_end().to_string(), fg)
+            })
+            .filter(|(_, line, _)| !line.is_empty())
+            .collect();
+        let row_of = |needle: &str| {
+            named_rows
+                .iter()
+                .find(|(_, line, _)| line.contains(needle))
+                .unwrap_or_else(|| panic!("baris {needle:?} tidak ada: {named_rows:?}"))
+        };
+        // `selected` = 1 -> baris kedua (`connect`) berwarna, sisanya tidak.
+        assert_eq!(
+            row_of("connect").2,
+            ratatui::style::Color::Cyan,
+            "baris terpilih harus berwarna aksen, bukan ditandai panah: {named_rows:?}"
+        );
+        for needle in ["model", "verify"] {
+            assert_ne!(
+                row_of(needle).2,
+                ratatui::style::Color::Cyan,
+                "baris tidak terpilih tidak boleh berwarna aksen: {named_rows:?}"
             );
         }
     }

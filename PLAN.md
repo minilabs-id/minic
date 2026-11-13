@@ -148,8 +148,9 @@ keterangan, apakah butuh argumen), dan **hanya** `run_command` yang mengeksekusi
 — metadata dan eksekusi tidak bisa lagi menyimpang.
 
 Mengetik `/` membuka daftar saran mengambang di atas composer. Daftar sengaja
-**polos**: hanya nama command, tanpa border, tanpa judul, tanpa baris petunjuk,
-dan tanpa keterangan — cukup untuk memindai dan memilih, dan tidak memakan
+**polos**: hanya nama command (tanpa garis miring), tanpa border, tanpa judul,
+tanpa baris petunjuk, dan tanpa keterangan. Pilihan dibedakan **hanya lewat
+warna** (cyan) — tanpa panah/penanda — cukup untuk memindai dan memilih, dan tidak memakan
 ruang transcript. Keterangan tetap disimpan di registry dan dipakai `/help`:
 
 - filter berdasarkan awalan, alias ikut dicari (`/models` → `model`);

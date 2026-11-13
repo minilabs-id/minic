@@ -289,18 +289,31 @@ fn typing_slash_shows_the_command_list_on_screen() {
     // Tunggu sampai popup benar-benar ada di layar (bukan menebak lewat sleep).
     // Penanda yang dipakai adalah nama command, bukan judul: daftar sengaja
     // tanpa judul dan tanpa keterangan.
-    let screen = session.wait_screen(&["/model", "/connect", "/quit"], Duration::from_secs(10));
+    let screen = session.wait_screen(&["model", "connect", "quit"], Duration::from_secs(10));
     session.quit();
 
     assert!(
-        screen.contains("/model"),
-        "entri /model tidak terlihat. Layar:\n{screen}"
+        screen.contains("model"),
+        "entri model tidak terlihat. Layar: {screen}"
     );
-    // Daftar polos: tidak ada border, judul, atau baris petunjuk.
-    for absent in ["commands", "Tab isi", "↑↓"] {
+    // Daftar polos: tidak ada panah, garis miring, border, judul, atau baris
+    // petunjuk. Yang diperiksa hanya baris daftar — `❯` di baris composer
+    // adalah prompt input, bukan penanda pilihan.
+    let list_rows: String = screen
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            ["model", "connect", "plan", "verify", "help", "quit"].contains(&t)
+        })
+        .collect();
+    assert!(
+        !list_rows.is_empty(),
+        "baris daftar tidak ditemukan: {screen}"
+    );
+    for absent in ["❯", "/", "│", "─", "commands", "Tab", "Esc", "↑↓"] {
         assert!(
-            !screen.contains(absent),
-            "daftar harus polos, tapi layar memuat {absent:?}. {screen}"
+            !list_rows.contains(absent),
+            "daftar harus polos, tapi memuat {absent:?}. {screen}"
         );
     }
 }
@@ -311,7 +324,7 @@ fn typing_an_argument_prefix_keeps_the_popup_open() {
         return;
     };
     session.type_text("/ve");
-    let screen = session.wait_screen(&["/ve"], Duration::from_secs(10));
+    let screen = session.wait_screen(&["/ve", "verify"], Duration::from_secs(10));
     session.quit();
 
     // Composer menerima ketikan. Popup sengaja tidak diperiksa di sini:
@@ -361,9 +374,8 @@ fn render_screen_replays_ratatui_frames() {
     );
     let screen = render_screen(raw.as_bytes());
     assert!(
-        screen.contains("/model"),
-        "layar:
-{screen}"
+        screen.contains("model"),
+        "entri model tidak terlihat. Layar: {screen}"
     );
     assert!(screen.contains("/model"), "layar:\n{screen}");
     assert!(

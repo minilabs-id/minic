@@ -354,7 +354,8 @@ Slash commands:
 | `/quit`, `/exit` | leave the TUI |
 
 Typing `/` opens a bare floating list of command names above the composer — no
-window, no border, no descriptions, no hint row, just the names. It filters as
+window, no border, no descriptions, no hint row, no `/` prefix, just the names.
+The selected row is shown purely by colour (cyan); there is no arrow marker. It filters as
 you type; `↑`/`↓` move the selection, `Tab` or `Enter` fills in the command
 without running it, and `Esc` closes the list before clearing the composer. Commands that take an argument
 insert a trailing space so you can type the argument straight away. The list
