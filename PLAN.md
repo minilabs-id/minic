@@ -147,7 +147,9 @@ dan mudah lupa. `tui::slash` kini menjadi satu registry (nama, alias,
 keterangan, apakah butuh argumen), dan **hanya** `run_command` yang mengeksekusi
 — metadata dan eksekusi tidak bisa lagi menyimpang.
 
-Mengetik `/` membuka daftar saran mengambang di atas composer:
+Mengetik `/` membuka daftar saran mengambang di atas composer. Daftar sengaja
+**hanya berisi nama command** tanpa keterangan — cukup untuk memindai dan
+memilih, dan tidak memakan ruang transcript. Keterangan tetap dipakai `/help`:
 
 - filter berdasarkan awalan, alias ikut dicari (`/models` → `model`);
 - `↑`/`↓` memindahkan pilihan, `Tab`/`Enter` mengisi, `Esc` menutup daftar

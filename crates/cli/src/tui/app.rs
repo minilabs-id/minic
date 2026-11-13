@@ -264,8 +264,9 @@ pub struct ComposerView {
 /// soal state filter — ia hanya menggambar apa yang sudah dipilih.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionView {
-    /// (nama command tanpa garis miring, keterangan).
-    pub items: Vec<(&'static str, &'static str)>,
+    /// Nama command tanpa garis miring. Daftar sengaja tanpa keterangan:
+    /// cukup nama, supaya popup tetap kecil dan mudah dipindai.
+    pub items: Vec<&'static str>,
     pub selected: usize,
     /// Petunjuk argumen untuk entri terpilih, mis. `CMD`.
     pub hint: Option<&'static str>,
@@ -433,7 +434,7 @@ impl App {
                 .completion
                 .visible()
                 .into_iter()
-                .map(|cmd| (cmd.name, cmd.about))
+                .map(|cmd| cmd.name)
                 .collect(),
             selected: self.completion.selected_index(),
             hint: self.completion.hint(),
@@ -2318,7 +2319,7 @@ mod ctrl_c_semantics_tests {
 
     fn items(app: &App) -> Vec<&'static str> {
         app.completion_view()
-            .map(|v| v.items.iter().map(|(name, _)| *name).collect())
+            .map(|v| v.items.clone())
             .unwrap_or_default()
     }
 

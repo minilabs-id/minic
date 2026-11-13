@@ -602,25 +602,26 @@ fn draw_completion(
     }
     let dim = Style::default().add_modifier(Modifier::DIM);
 
-    // Lebar kolom nama (termasuk penanda "❯ ") dan lebar total. Keterangan
-    // boleh terpotong di layar sempit — nama command tidak boleh.
-    let name_col = completion
-        .items
-        .iter()
-        .map(|(name, _)| name.chars().count() + 2)
-        .max()
-        .unwrap_or(10);
+    // Daftar sengaja tanpa keterangan: cukup nama command. Lebar mengikuti
+    // nama terpanjang (termasuk penanda "❯ " dan "/"), dengan batas agar tidak
+    // keluar layar. `.clamp(low, high)` panic bila low > high, jadi batas bawah
+    // diturunkan ke lebar area pada layar sangat sempit.
     let widest = completion
         .items
         .iter()
-        .map(|(name, about)| name.chars().count() + 2 + 2 + about.chars().count())
+        .map(|name| name.chars().count() + 3)
         .max()
-        .unwrap_or(20);
-    // Lebar tidak boleh melebihi area: `.clamp(low, high)` panic bila low > high,
-    // jadi batas bawah diturunkan ke lebar area pada layar sangat sempit.
+        .unwrap_or(10);
+    // Lebar harus menampung baris petunjuk juga, bukan hanya nama command —
+    // kalau tidak, petunjuk terpotong di popup sempit.
+    let hint_text = match completion.hint {
+        Some(arg) => format!("↑↓ · Tab isi · Esc · <{arg}>"),
+        None => "↑↓ · Tab isi · Esc".to_string(),
+    };
+    let hint_width = display_width(&hint_text) as u16 + 4;
     let max_width = area.width.saturating_sub(2).max(1);
-    let min_width = 30.min(max_width);
-    let width = (widest as u16 + 6).clamp(min_width, max_width);
+    let min_width = 16.min(max_width);
+    let width = ((widest as u16).max(hint_width) + 4).clamp(min_width, max_width);
 
     let desired = completion.height().min(area.height.saturating_sub(1));
     let y = composer_area.y.saturating_sub(desired);
@@ -631,46 +632,32 @@ fn draw_completion(
     let block = Block::default()
         .borders(ratatui::widgets::Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(dim)
-        .title(Span::styled(
-            " commands ",
-            Style::default().add_modifier(Modifier::BOLD),
-        ));
+        .border_style(dim);
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
     // Sisakan satu baris di dalam border untuk petunjuk tombol.
     let list_height = inner.height.saturating_sub(1);
     let mut lines: Vec<TLine> = Vec::with_capacity(list_height as usize);
-    for (index, (name, about)) in completion.items.iter().enumerate() {
+    for (index, name) in completion.items.iter().enumerate() {
         if index >= list_height as usize {
             break;
         }
         let picked = index == completion.selected;
         let marker = if picked { "❯ " } else { "  " };
-        let label = format!("{marker}/{name}");
-        // Ratakan keterangan pada kolom yang sama, lalu potong bila layar
-        // sempit agar tidak menimpa border.
-        let pad = name_col.saturating_sub(name.chars().count() + 2) + 2;
-        let text = format!("{label}{}{about}", " ".repeat(pad));
         let style = if picked {
             Style::default().add_modifier(Modifier::BOLD)
         } else {
             dim
         };
-        lines.push(TLine::from(Span::styled(text, style)));
+        lines.push(TLine::from(Span::styled(format!("{marker}/{name}"), style)));
     }
     frame.render_widget(Paragraph::new(lines), inner);
 
-    // Baris petunjuk: ↑↓ pilih · Tab isi · Enter pilih · Esc tutup.
-    let hint = match completion.hint {
-        Some(arg) => format!("↑↓ pilih · Tab/Enter isi · Esc tutup · <{arg}>"),
-        None => "↑↓ pilih · Tab/Enter isi · Esc tutup".to_string(),
-    };
     if inner.height > 0 {
         let hint_row = Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1);
         frame.render_widget(
-            Paragraph::new(hint).style(dim.add_modifier(Modifier::ITALIC)),
+            Paragraph::new(hint_text.clone()).style(dim.add_modifier(Modifier::ITALIC)),
             hint_row,
         );
     }
@@ -1357,7 +1344,7 @@ mod output_render_tests {
         app::CompletionView {
             items: crate::tui::slash::COMMANDS
                 .iter()
-                .map(|cmd| (cmd.name, cmd.about))
+                .map(|cmd| cmd.name)
                 .collect(),
             selected,
             hint: Some("CMD"),
