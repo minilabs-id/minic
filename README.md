@@ -1,15 +1,21 @@
 # minic
 
-**v0.1.0** — Native Rust terminal coding agent.
+**v0.3.0** — Native Rust terminal coding agent.
 
-This repository is the implementation of milestones **M0–M6** plus a reliability
-upscale (streaming session persistence, provider retry/backoff, auto
-context-window detection, conditional tool registration, meaningful exit codes)
-and an autonomy/transparency hardening pass (audited permission decisions, a
+This repository implements milestones **M0–M6** plus a reliability upscale
+(streaming session persistence, provider retry/backoff, auto context-window
+detection, conditional tool registration, meaningful exit codes) and an
+autonomy/transparency hardening pass (audited permission decisions, a
 risky-command shell guard with checkpoints, category-scoped approvals, a
 read-only tool-output panel, and reviewable saved plans).
 
-See [`PLAN.md`](./PLAN.md) for the full plan, decisions, and roadmap.
+v0.2.0–v0.3.0 added response integrity (truncated and malformed tool calls are
+never executed), a verification loop, `.gitignore`-aware search, parallel
+read-only tool calls, a floating command autocomplete, and **work modes** —
+`/discuss` (read-only, enforced in the permission layer) and `/execute`.
+
+See [`CHANGELOG.md`](./CHANGELOG.md) for what changed, and
+[`PLAN.md`](./PLAN.md) for the full plan, decisions and roadmap.
 
 ## Status
 
