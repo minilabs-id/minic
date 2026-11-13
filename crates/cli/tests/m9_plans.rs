@@ -13,7 +13,6 @@ use minic::model_session::ModelSession;
 use minic::plans::{self, PlanStatus};
 use minic::subagent::SubAgentPool;
 use minic::tools::delegate::DelegateTask;
-use minic_core::permission::PermissionMode;
 use minic_core::tool::{Tool, ToolContext};
 use serde_json::json;
 
@@ -41,7 +40,6 @@ fn delegate(root: &Path) -> DelegateTask {
 fn ctx(root: &Path) -> ToolContext {
     ToolContext {
         cwd: root.to_path_buf(),
-        permission_mode: PermissionMode::Auto,
     }
 }
 

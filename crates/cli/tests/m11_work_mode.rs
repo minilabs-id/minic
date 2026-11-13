@@ -181,7 +181,6 @@ async fn run_write_in_mode(root: &std::path::Path, mode: PermissionMode) -> Cont
     let policy = SimplePolicy::new(root.to_path_buf(), mode);
     let ctx = ToolContext {
         cwd: root.to_path_buf(),
-        permission_mode: mode,
     };
     let mut history = ContextStore::new();
     history.push(Message::user("write x.txt"));

@@ -8,7 +8,6 @@ use minic::model_session::ModelSession;
 use minic::provider::fake::FakeProvider;
 use minic::subagent::{MAX_SUBAGENTS, SubAgentPool};
 use minic::tools::delegate::DelegateTask;
-use minic_core::permission::PermissionMode;
 use minic_core::provider::ModelProvider;
 use minic_core::tool::{Tool, ToolContext};
 use serde_json::json;
@@ -55,10 +54,7 @@ async fn runs_ten_parallel_subagents() {
 #[tokio::test]
 async fn delegate_rejects_more_than_ten() {
     let root = temp_root("reject");
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
     let tasks: Vec<String> = (0..11).map(|i| format!("t{i}")).collect();
     let result = DelegateTask::new(Arc::new(pool(&root)))
         .execute(json!({ "tasks": tasks }), &ctx)
@@ -76,10 +72,7 @@ async fn delegate_rejects_more_than_ten() {
 #[tokio::test]
 async fn delegate_accepts_ten() {
     let root = temp_root("accept");
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
     let tasks: Vec<String> = (1..=10).map(|i| format!("task {i}")).collect();
     let result = DelegateTask::new(Arc::new(pool(&root)))
         .execute(json!({ "tasks": tasks }), &ctx)
@@ -93,14 +86,51 @@ async fn delegate_accepts_ten() {
 #[tokio::test]
 async fn empty_tasks_is_rejected() {
     let root = temp_root("empty");
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
     let result = DelegateTask::new(Arc::new(pool(&root)))
         .execute(json!({ "tasks": [] }), &ctx)
         .await
         .unwrap();
     assert!(result.is_error);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// W7: sub-agent mewarisi mode kerja induk.
+///
+/// Dulu sub-agent selalu `PermissionMode::ReadOnly` tanpa cara apa pun untuk
+/// mendelegasikan pekerjaan tulis. Test ini memeriksa keputusan yang dipakai
+/// untuk membangun sub-agent, sehingga tidak butuh provider.
+#[test]
+fn subagent_inherits_the_parent_work_mode() {
+    use minic::policy::SimplePolicy;
+    use minic_core::permission::PermissionMode;
+
+    let root = temp_root("subagent-mode");
+    let provider: Arc<dyn ModelProvider> = Arc::new(FakeProvider::default());
+    let session = Arc::new(ModelSession::new(Some(provider), "fake", 128_000));
+
+    // Tanpa policy induk: read-only adalah default aman.
+    let pool = SubAgentPool::new(session.clone(), None, 10, root.clone());
+    assert!(
+        !pool.may_write(),
+        "tanpa policy induk sub-agent harus read-only"
+    );
+
+    // Induk eksekusi → sub-agent boleh menulis.
+    let pool = SubAgentPool::new(session.clone(), None, 10, root.clone()).with_policy(Arc::new(
+        SimplePolicy::new(root.clone(), PermissionMode::Auto),
+    ));
+    assert!(
+        pool.may_write(),
+        "induk mode eksekusi harus bisa mendelegasikan pekerjaan tulis"
+    );
+
+    // Induk diskusi → sub-agent read-only. Guardrail induk tidak boleh hilang
+    // lewat delegasi.
+    let pool = SubAgentPool::new(session, None, 10, root.clone())
+        .with_policy(Arc::new(SimplePolicy::new(root, PermissionMode::ReadOnly)));
+    assert!(
+        !pool.may_write(),
+        "mode diskusi induk harus membuat delegasi read-only juga"
+    );
 }

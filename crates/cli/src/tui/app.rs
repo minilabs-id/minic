@@ -89,6 +89,34 @@ impl WorkMode {
             WorkMode::Execute => minic_core::permission::PermissionMode::Auto,
         }
     }
+
+    /// Kebalikan `label()`, untuk memulihkan mode tersimpan. Nilai tak dikenal
+    /// menjadi `None` (bukan `Execute`): mode tersimpan yang rusak jangan
+    /// diam-diam menaikkan izin.
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label {
+            "discuss" => Some(WorkMode::Discuss),
+            "execute" => Some(WorkMode::Execute),
+            _ => None,
+        }
+    }
+
+    /// Kalimat yang disuntikkan ke system prompt agar model tidak membuang
+    /// langkah mencoba tool yang pasti ditolak.
+    ///
+    /// Penegakan tetap di policy; ini hanya supaya model tahu aturannya lebih
+    /// awal. Tanpa ini model menabrak penolakan berulang kali dan tampak rusak
+    /// padahal hanya tidak diberi tahu.
+    pub const fn system_note(self) -> &'static str {
+        match self {
+            WorkMode::Discuss => {
+                "Mode: discuss. You cannot modify the workspace. Read, search, and explain.                  Propose changes as text or a diff in your reply; do not attempt write_file,                  edit, or shell commands that change files. If code must change, say what to                  change and ask the user to switch to execute mode (/execute)."
+            }
+            WorkMode::Execute => {
+                "Mode: execute. You may modify the workspace and run commands, subject to the                  user's approval settings."
+            }
+        }
+    }
 }
 
 /// Perintah slash yang dikenali composer.
@@ -438,20 +466,37 @@ impl App {
         self.work_mode = mode;
     }
 
-    /// Ganti mode kerja dan catat di transcript. Driver yang menegakkan mode
-    /// (lewat policy) setelah menerima `Command::SetMode`.
+    /// Ganti mode kerja dan catat di transcript **dan** di riwayat model.
+    ///
+    /// Riwayat penting: tanpa entri di `messages`, model tidak tahu mode
+    /// berubah dan akan terus mencoba tool yang kini ditolak. System prompt
+    /// hanya menyebut mode saat turn dimulai, jadi pesan di sini yang membuat
+    /// pergantian mode terlihat di turn berikutnya.
     pub fn set_work_mode(&mut self, mode: WorkMode) {
         if self.work_mode == mode {
             return;
         }
         self.work_mode = mode;
         self.push_blank();
-        match mode {
-            WorkMode::Discuss => self.push_note(
-                "mode discuss: mutating tools are denied — read, search, and explain only",
-            ),
-            WorkMode::Execute => self.push_note("mode execute: the agent may modify the workspace"),
+        let text = match mode {
+            WorkMode::Discuss => {
+                "mode discuss: mutating tools are denied — read, search, and explain only"
+            }
+            WorkMode::Execute => "mode execute: the agent may modify the workspace",
+        };
+        self.push_note(text);
+        // Mode dibaca per keputusan, jadi pergantian di tengah turn berlaku
+        // untuk tool **berikutnya**, bukan yang sedang berjalan. Katakan itu:
+        // pengguna yang ingin menghentikan turn sekarang harus tahu soal Esc.
+        if self.busy {
+            self.push_note("applies from the next tool call · Esc stops the running turn now");
         }
+        // System message, bukan user: ini instruksi tingkat sistem, bukan
+        // sesuatu yang "diucapkan" pengguna.
+        self.messages.push(Message::system(format!(
+            "[mode changed] {}",
+            mode.system_note()
+        )));
         self.scroll_to_bottom();
     }
 
@@ -1367,6 +1412,12 @@ impl App {
             // Shift+A = izinkan seluruh kategori (mis. semua file-write).
             Key::Char('c') | Key::Char('C') => {
                 let category = Category::of_tool(&view.tool);
+                // Kategori yang belum dipetakan tidak boleh diberikan lewat
+                // satu tombol: cakupannya tidak bisa dijelaskan ke pengguna,
+                // dan akan ikut mengizinkan tool baru di masa depan.
+                if !category.is_grantable() {
+                    return Action::None;
+                }
                 Action::Approval(ApprovalChoice::AllowCategory(category))
             }
             Key::Char('?') => {
@@ -2739,6 +2790,100 @@ mod ctrl_c_semantics_tests {
                 "/{} tidak muncul di bantuan: {notes:?}",
                 cmd.name
             );
+        }
+    }
+}
+
+/// Mode kerja harus terlihat oleh **model**, bukan hanya oleh policy.
+///
+/// Kalau mode hanya ditegakkan di policy tanpa diberitahukan, model terus
+/// mencoba `write_file` dan menabrak penolakan — pengguna melihat agen yang
+/// tampak rusak padahal hanya tidak diberi tahu aturannya.
+#[cfg(test)]
+mod work_mode_visibility_tests {
+    use super::*;
+
+    #[test]
+    fn discuss_mode_tells_the_model_it_cannot_write() {
+        let note = WorkMode::Discuss.system_note();
+        assert!(note.contains("discuss"), "note: {note}");
+        assert!(
+            note.contains("cannot modify"),
+            "model harus tahu ia tidak boleh mengubah: {note}"
+        );
+        assert!(
+            note.contains("/execute"),
+            "model harus bisa memberi tahu pengguna cara melanjutkan: {note}"
+        );
+    }
+
+    #[test]
+    fn execute_mode_tells_the_model_it_may_write() {
+        let note = WorkMode::Execute.system_note();
+        assert!(note.contains("execute"), "note: {note}");
+        assert!(note.contains("may modify"), "note: {note}");
+    }
+
+    /// W3: system prompt yang dipakai turn harus memuat catatan mode.
+    #[test]
+    fn system_prompt_carries_the_mode_note() {
+        let base = "You are a coding agent.";
+        for mode in [WorkMode::Discuss, WorkMode::Execute] {
+            let combined = match Some(base) {
+                Some(base) if !base.trim().is_empty() => {
+                    format!("{base}\n\n{}", mode.system_note())
+                }
+                _ => mode.system_note().to_string(),
+            };
+            assert!(
+                combined.contains(mode.system_note()),
+                "system prompt harus memuat catatan mode {mode:?}"
+            );
+            assert!(
+                combined.contains(base),
+                "system prompt asli tidak boleh hilang"
+            );
+        }
+    }
+
+    /// W4: pergantian mode harus sampai ke riwayat pesan model, bukan hanya
+    /// ke transcript.
+    #[test]
+    fn switching_mode_records_itself_in_model_history() {
+        let mut app = App::new("");
+        app.init_work_mode(WorkMode::Execute);
+        let before = app.messages().len();
+
+        app.set_work_mode(WorkMode::Discuss);
+
+        let added: Vec<_> = app.messages()[before..].to_vec();
+        assert!(
+            added.iter().any(|m| m.role == Role::System
+                && m.text().contains("[mode changed]")
+                && m.text().contains("discuss")),
+            "riwayat model harus mencatat pergantian mode: {added:?}"
+        );
+        // System, bukan user: ini instruksi sistem, bukan ucapan pengguna.
+        assert!(
+            !added.iter().any(|m| m.role == Role::User),
+            "pergantian mode tidak boleh tampak sebagai pesan pengguna"
+        );
+    }
+
+    /// W9: label tersimpan yang tidak dikenal tidak boleh menjadi `Execute`.
+    #[test]
+    fn unknown_stored_mode_is_ignored_rather_than_escalated() {
+        assert_eq!(WorkMode::from_label("discuss"), Some(WorkMode::Discuss));
+        assert_eq!(WorkMode::from_label("execute"), Some(WorkMode::Execute));
+        assert_eq!(WorkMode::from_label("yolo"), None);
+        assert_eq!(WorkMode::from_label(""), None);
+    }
+
+    /// Label bertahan lewat penyimpanan (string, bukan struct).
+    #[test]
+    fn labels_round_trip() {
+        for mode in [WorkMode::Discuss, WorkMode::Execute] {
+            assert_eq!(WorkMode::from_label(mode.label()), Some(mode));
         }
     }
 }

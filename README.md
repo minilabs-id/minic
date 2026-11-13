@@ -1,6 +1,6 @@
 # minic
 
-**v0.3.0** — Native Rust terminal coding agent.
+**v0.3.1** — Native Rust terminal coding agent.
 
 This repository implements milestones **M0–M6** plus a reliability upscale
 (streaming session persistence, provider retry/backoff, auto context-window
@@ -9,7 +9,7 @@ autonomy/transparency hardening pass (audited permission decisions, a
 risky-command shell guard with checkpoints, category-scoped approvals, a
 read-only tool-output panel, and reviewable saved plans).
 
-v0.2.0–v0.3.0 added response integrity (truncated and malformed tool calls are
+v0.2.0–v0.3.1 added response integrity (truncated and malformed tool calls are
 never executed), a verification loop, `.gitignore`-aware search, parallel
 read-only tool calls, a floating command autocomplete, and **work modes** —
 `/discuss` (read-only, enforced in the permission layer) and `/execute`.

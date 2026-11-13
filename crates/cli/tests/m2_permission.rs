@@ -208,10 +208,7 @@ async fn agent_ask_denies_write_in_non_tty_and_does_not_touch_disk() {
     registry.register(Box::new(WriteFile));
 
     let policy = SimplePolicy::new(root.clone(), PermissionMode::Ask);
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Ask,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
 
     let mut history = ContextStore::new();
     history.push(Message::user("write x.txt"));
@@ -256,10 +253,7 @@ async fn auto_mode_writes_e2e() {
     registry.register(Box::new(WriteFile));
 
     let policy = SimplePolicy::new(root.clone(), PermissionMode::Auto);
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
 
     let mut history = ContextStore::new();
     history.push(Message::user("write x.txt"));

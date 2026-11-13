@@ -10,7 +10,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use minic::tools::common::WalkFilter;
 use minic::tools::glob::Glob;
 use minic::tools::grep::Grep;
-use minic_core::permission::PermissionMode;
 use minic_core::tool::{Tool, ToolContext};
 use serde_json::json;
 
@@ -33,7 +32,6 @@ fn write(root: &Path, rel: &str, content: &str) {
 fn ctx(root: &Path) -> ToolContext {
     ToolContext {
         cwd: root.to_path_buf(),
-        permission_mode: PermissionMode::Auto,
     }
 }
 

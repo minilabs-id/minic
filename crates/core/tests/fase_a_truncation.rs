@@ -15,7 +15,7 @@ use minic_core::agent::{NoopHooks, RunOptions, run_agent};
 use minic_core::error::AgentError;
 use minic_core::events::AgentEvent;
 use minic_core::history::ContextStore;
-use minic_core::permission::{AllowAll, PermissionMode};
+use minic_core::permission::AllowAll;
 use minic_core::provider::{BoxStream, FinishReason, ModelProvider, ProviderEvent, StreamRequest};
 use minic_core::tool::{Tool, ToolContext, ToolRegistry};
 use minic_core::types::{Message, Role, ToolResult};
@@ -119,7 +119,6 @@ fn harness() -> Harness {
         },
         ctx: ToolContext {
             cwd: std::env::temp_dir(),
-            permission_mode: PermissionMode::Auto,
         },
     }
 }

@@ -560,18 +560,26 @@ pub async fn run_agent(
         // harus melihat kerusakan yang ia buat sendiri, bukan manusia yang
         // menemukannya belakangan.
         if mutated && let Some(command) = options.verify_command.as_deref() {
-            let verify = run_verify(command, tools, tool_ctx).await;
+            let (verify, decision, reason) =
+                run_verify(command, tools, permissions, tool_ctx).await;
             let failed = verify.is_error;
             on_event(AgentEvent::ToolCallStarted {
                 id: verify.tool_call_id.clone().to_string(),
                 name: "verify".to_string(),
                 arguments: serde_json::json!({ "command": command }),
             });
+            // Laporkan keputusan yang **sebenarnya** diambil policy. Dulu selalu
+            // `Always`, yang membuat jejak audit menyatakan sesuatu yang tidak
+            // pernah terjadi.
             on_event(AgentEvent::ToolDecided {
                 id: verify.tool_call_id.clone().to_string(),
                 name: "verify".to_string(),
-                decision: DecisionKind::Always,
-                reason: format!("verification after mutation: {command}"),
+                decision,
+                reason: if reason.is_empty() {
+                    format!("verification after mutation: {command}")
+                } else {
+                    format!("verification after mutation: {command} — {reason}")
+                },
             });
             on_event(AgentEvent::ToolCallFinished {
                 id: verify.tool_call_id.clone().to_string(),
@@ -581,10 +589,14 @@ pub async fn run_agent(
                 result_preview: preview(&verify.content),
                 result_detail: detail(&verify.content),
             });
-            if failed {
-                on_event(AgentEvent::Note {
+            match decision {
+                DecisionKind::Deny => on_event(AgentEvent::Note {
+                    text: format!("verification NOT RUN: {command} — permission denied"),
+                }),
+                _ if failed => on_event(AgentEvent::Note {
                     text: format!("verification FAILED: {command} — see the verify result"),
-                });
+                }),
+                _ => {}
             }
             history.push(Message::tool_result(verify));
             outcome.tool_calls += 1;
@@ -658,14 +670,54 @@ async fn run_parallel(
 /// tool yang sama dengan yang dipakai model, sehingga sandbox/policy/checkpoint
 /// tetap berlaku. Bila `bash` tidak terdaftar, verifikasi dilewati dengan hasil
 /// non-error agar run tidak gagal hanya karena fitur opsional ini.
-async fn run_verify(command: &str, tools: &ToolRegistry, tool_ctx: &ToolContext) -> ToolResult {
+/// Jalankan perintah verifikasi lewat jalur izin yang **sama** dengan tool
+/// lain.
+///
+/// Sebelumnya fungsi ini memanggil `execute_tool` langsung, sehingga di mode
+/// `ask` perintah shell berjalan tanpa approval dan shell guard pun dilewati.
+/// Mengembalikan hasil tool beserta keputusan sebenarnya agar jejak audit tidak
+/// mengklaim `Always` untuk sesuatu yang tidak pernah disetujui.
+async fn run_verify(
+    command: &str,
+    tools: &ToolRegistry,
+    permissions: &dyn PermissionHandler,
+    tool_ctx: &ToolContext,
+) -> (ToolResult, DecisionKind, String) {
     let call = ToolCall {
         id: next_call_id(),
         name: "bash".to_string(),
         arguments: serde_json::json!({ "command": command }),
     };
-    let mut result = execute_tool(tools, &call, tool_ctx).await;
+
+    let decision = permissions.decide("bash", &call.arguments, true).await;
+    let (kind, reason) = match &decision {
+        Decision::Deny(reason) => (DecisionKind::Deny, reason.clone()),
+        Decision::Ask(reason) => (DecisionKind::Deny, format!("unresolved approval: {reason}")),
+        Decision::Allow => (DecisionKind::Allow, String::new()),
+    };
+    // `Decision::Ask` ditangani policy menjadi Allow/Deny sebelum sampai sini
+    // pada jalur tool biasa; di sini kita tidak punya kanal approval, jadi
+    // permintaan yang belum terselesaikan diperlakukan sebagai penolakan
+    // (fail-closed) alih-alih menjalankan perintah.
+    let mut result = match decision {
+        Decision::Allow => execute_tool(tools, &call, tool_ctx).await,
+        Decision::Deny(reason) => ToolResult::err(
+            call.id.clone(),
+            "verify",
+            format!("verification skipped, permission denied: {reason}"),
+        ),
+        Decision::Ask(reason) => ToolResult::err(
+            call.id.clone(),
+            "verify",
+            format!("verification skipped, approval unresolved: {reason}"),
+        ),
+    };
     result.name = "verify".to_string();
+    // Penolakan tidak menyentuh hasil tool; kembalikan apa adanya apa yang
+    // harus dilihat model.
+    if kind == DecisionKind::Deny {
+        return (result, kind, reason);
+    }
     if !result.is_error {
         result.content = format!(
             "verification passed: {command}
@@ -682,7 +734,7 @@ Fix the failure before continuing.",
             result.content.trim_end()
         );
     }
-    result
+    (result, kind, reason)
 }
 
 async fn execute_tool(tools: &ToolRegistry, call: &ToolCall, tool_ctx: &ToolContext) -> ToolResult {

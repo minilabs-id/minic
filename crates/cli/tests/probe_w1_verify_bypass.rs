@@ -1,18 +1,15 @@
-//! Probe: apakah jalur verifikasi menghormati handler izin?
+//! W1: jalur verifikasi harus menghormati handler izin.
 //!
-//! Test ini **sengaja** ditulis untuk membuktikan klaim di `AUDIT_work_mode.md`
-//! (W1): `run_verify` memanggil `execute_tool` langsung tanpa
-//! `permissions.decide`. Handler di bawah menolak **semua** tool; bila
-//! verifikasi tetap berjalan, kebocoran terbukti.
-//!
-//! Setelah W1 diperbaiki, test ini harus diubah menjadi kebalikannya:
-//! verifikasi harus ditolak dan hasilnya bukan "verification passed/failed".
+//! Dulu `run_verify` memanggil `execute_tool` langsung, sehingga perintah
+//! verifikasi berjalan tanpa approval di mode `ask` dan melewati shell guard.
+//! Test ini dulu **lulus** dengan assertion "kebocoran terjadi"; sekarang
+//! assertion-nya dibalik dan menjadi penjaga tetap.
 
 use futures_core::future::BoxFuture;
 use minic_core::agent::{NoopHooks, RunOptions, run_agent};
 use minic_core::error::AgentError;
 use minic_core::history::ContextStore;
-use minic_core::permission::{Decision, PermissionHandler, PermissionMode};
+use minic_core::permission::{Decision, PermissionHandler};
 use minic_core::provider::{BoxStream, FinishReason, ModelProvider, ProviderEvent, StreamRequest};
 use minic_core::tool::{Tool, ToolContext, ToolRegistry};
 use minic_core::types::{Message, Role, ToolResult};
@@ -126,13 +123,9 @@ impl ModelProvider for Scripted {
     }
 }
 
-/// **W1**: verifikasi menjalankan `bash` tanpa bertanya ke handler izin.
-///
-/// Test ini mengharapkan kebocoran (assertion "bash ran without permission").
-/// Saat W1 diperbaiki, ubah menjadi `assert!(!ran)` beserta penolakan yang
-/// dilaporkan ke model.
+/// **W1**: verifikasi bertanya ke handler izin dan menghormati penolakan.
 #[tokio::test]
-async fn verify_runs_bash_without_consulting_the_permission_handler() {
+async fn verify_asks_the_permission_handler_and_respects_a_denial() {
     let mut registry = ToolRegistry::new();
     let bash_ran = Arc::new(AtomicBool::new(false));
     registry.register(Box::new(Mutator));
@@ -147,7 +140,6 @@ async fn verify_runs_bash_without_consulting_the_permission_handler() {
 
     let ctx = ToolContext {
         cwd: std::env::temp_dir(),
-        permission_mode: PermissionMode::Ask,
     };
     let mut history = ContextStore::new();
     history.push(Message::user("change the code"));
@@ -173,14 +165,35 @@ async fn verify_runs_bash_without_consulting_the_permission_handler() {
     .await
     .expect("run completes");
 
-    // Kebocoran yang didokumentasikan di AUDIT_work_mode.md W1:
+    // Handler izin harus **ditanya** dulu…
     assert!(
-        bash_ran.load(Ordering::SeqCst),
-        "verifikasi TIDAK berjalan — berarti W1 sudah diperbaiki; \
-         ubah test ini menjadi assertion kebalikannya"
+        bash_asked.load(Ordering::SeqCst),
+        "verifikasi tidak berkonsultasi dengan handler izin (kebocoran W1 kembali)"
+    );
+    // …dan penolakannya dihormati: perintah tidak boleh dijalankan.
+    assert!(
+        !bash_ran.load(Ordering::SeqCst),
+        "perintah verifikasi tetap dijalankan meski ditolak (kebocoran W1 kembali)"
+    );
+
+    // Penolakan harus sampai ke model sebagai pesan yang bisa ditindaklanjuti,
+    // bukan klaim "verification passed".
+    let tool_messages: Vec<String> = history
+        .messages()
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .map(|m| m.text())
+        .collect();
+    let verify_message = tool_messages
+        .iter()
+        .find(|text| text.contains("verification"))
+        .unwrap_or_else(|| panic!("tidak ada pesan verifikasi: {tool_messages:?}"));
+    assert!(
+        verify_message.contains("permission denied"),
+        "penolakan harus disebut jelas: {verify_message}"
     );
     assert!(
-        !bash_asked.load(Ordering::SeqCst),
-        "handler izin ternyata dipanggil untuk bash — W1 sudah diperbaiki"
+        !verify_message.contains("verification passed"),
+        "tidak boleh mengklaim lulus: {verify_message}"
     );
 }

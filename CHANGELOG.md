@@ -4,6 +4,62 @@ All notable changes to minic are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — 2026-11-13
+
+Closes every finding from the work-mode audit (`AUDIT_work_mode.md`, W1–W10).
+Each fix is guarded by a test that was proven load-bearing by mutation: revert
+the code and the test fails.
+
+### Security
+
+- **Verification no longer bypasses the permission handler** (W1). `run_verify`
+  called `execute_tool` directly, so `--verify` ran shell commands without an
+  approval prompt in `ask` mode and skipped the shell-risk guard. It now goes
+  through `permissions.decide`, and the `ToolDecided` event reports the real
+  decision instead of the false `Always`. A denial surfaces to the model as a
+  `permission denied` result plus a `verification NOT RUN` note, never as
+  "passed".
+- **Approval categories are no longer over-broad** (W8). `mcp_call`, `mcp_list`
+  and `delegate_task` shared `Category::Other`, so pressing `c` on one MCP call
+  also granted delegation. They now have `Category::Mcp` and
+  `Category::Delegate`. Unmapped tools stay `Other` and cannot be granted as a
+  category at all — the approval prompt stops offering `[c]` for them.
+- **Switching modes discards "always allow" grants** (W9). A grant made in
+  `execute` no longer survives into `discuss`, so returning to a mode re-asks
+  instead of silently reusing a decision made under different rules.
+
+### Added
+
+- **The model now knows the active mode** (W3, W4). `WorkMode::system_note()` is
+  injected into the system prompt each turn, and every switch appends a system
+  message to the model's history. Previously the mode was enforced but never
+  communicated, so the agent kept attempting denied tools and looked broken.
+- **The mode persists across sessions** (W5). A new `mode` column on the
+  `sessions` table (additive migration) is restored on start unless `--mode` is
+  given explicitly. An unrecognised stored value is ignored rather than treated
+  as `execute`.
+- **Sub-agents inherit the parent's mode** (W7). `SubAgentPool::with_policy`
+  makes delegation follow the caller: `execute` lets a sub-agent register
+  `write_file` and `edit`; `discuss` keeps it read-only. Sub-agents still get no
+  `bash` and no nested `delegate_task`.
+- **Mode switching mid-turn is explained** (W6). The transcript states that the
+  change applies from the next tool call and that `Esc` stops the running turn.
+
+### Fixed
+
+- **The mode label can no longer be truncated** (W10). It was rendered inside
+  the truncatable status string; on narrow screens a user in `discuss` could read
+  `discus` and assume `execute`. It now has its own fixed-width column that
+  shrinks only after the path/hint column.
+- **`set_mode` stores `to_u8()` instead of `mode as u8`**, so adding a variant can
+  no longer shift the stored value silently.
+
+### Removed
+
+- **`ToolContext.permission_mode`** (W2). It was written once at startup and read
+  by nothing; with modes now switchable it was stale and misleading. The
+  `PermissionHandler` is the single source of truth, read per decision.
+
 ## [0.3.0] — 2026-11-13
 
 ### Added

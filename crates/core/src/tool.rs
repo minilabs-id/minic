@@ -1,17 +1,22 @@
 //! Abstraksi tool + registry.
 
 use crate::error::AgentError;
-use crate::permission::PermissionMode;
 use crate::types::ToolResult;
 use futures_core::future::BoxFuture;
 use std::path::PathBuf;
 
 /// Konteks yang diberikan ke tool. `cwd` **wajib** datang dari sini, bukan
 /// dari `std::env::current_dir()` (pelajaran baseline: cwd tool harus eksplisit).
+///
+/// Catatan penting: **tidak ada** salinan mode izin di sini. Dulu ada field
+/// `permission_mode` yang diisi sekali saat startup dan tidak pernah dibaca
+/// tool mana pun; setelah mode bisa diganti saat sesi berjalan (`/discuss`,
+/// `/execute`) field itu menjadi nilai basi yang menyesatkan. Aturan izin
+/// dibaca dari `PermissionHandler` setiap keputusan — itulah satu-satunya
+/// sumber kebenaran.
 #[derive(Debug, Clone)]
 pub struct ToolContext {
     pub cwd: PathBuf,
-    pub permission_mode: PermissionMode,
 }
 
 pub trait Tool: Send + Sync {

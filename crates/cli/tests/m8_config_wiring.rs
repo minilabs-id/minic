@@ -8,7 +8,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use minic::config::FileConfig;
 use minic::subagent::{MAX_SUBAGENTS, SubAgentPool};
 use minic::tools::bash::Bash;
-use minic_core::permission::PermissionMode;
 use minic_core::tool::{Tool, ToolContext};
 use serde_json::json;
 
@@ -25,7 +24,6 @@ fn temp_root(tag: &str) -> PathBuf {
 fn ctx_for(root: &Path) -> ToolContext {
     ToolContext {
         cwd: root.to_path_buf(),
-        permission_mode: PermissionMode::Auto,
     }
 }
 

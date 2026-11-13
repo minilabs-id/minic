@@ -9,7 +9,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use minic::tools::grep::Grep;
 use minic::tools::read_file::ReadFile;
-use minic_core::permission::PermissionMode;
 use minic_core::tool::{Tool, ToolContext};
 use serde_json::json;
 
@@ -26,7 +25,6 @@ fn temp_root(tag: &str) -> PathBuf {
 fn ctx(root: &Path) -> ToolContext {
     ToolContext {
         cwd: root.to_path_buf(),
-        permission_mode: PermissionMode::Auto,
     }
 }
 

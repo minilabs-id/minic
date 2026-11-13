@@ -157,8 +157,22 @@ pub async fn run(deps: TuiDeps, initial: Vec<Message>) -> anyhow::Result<()> {
     let _guard = TerminalGuard;
 
     let mut app = App::new("");
-    // `--mode readonly` setara dengan mode diskusi; selain itu eksekusi.
-    app.init_work_mode(
+    // Urutan penentuan mode:
+    // 1. `--mode` eksplisit menang (pengguna baru saja memintanya).
+    // 2. Mode tersimpan dari sesi sebelumnya, untuk `--resume`/`--session`.
+    // 3. Default eksekusi.
+    // Tanpa langkah 2, guardrail diskusi reset diam-diam ke eksekusi setiap
+    // kali sesi dibuka kembali — default yang salah untuk sebuah pembatas.
+    let mode_is_explicit = std::env::args().any(|a| a == "--mode" || a.starts_with("--mode="));
+    let restored = if mode_is_explicit {
+        None
+    } else {
+        persistence
+            .mode()
+            .and_then(|label| crate::tui::app::WorkMode::from_label(&label))
+    };
+    let work_mode = restored.unwrap_or_else(|| {
+        // `--mode readonly` setara dengan mode diskusi; selain itu eksekusi.
         if matches!(
             policy.mode(),
             minic_core::permission::PermissionMode::ReadOnly
@@ -166,8 +180,11 @@ pub async fn run(deps: TuiDeps, initial: Vec<Message>) -> anyhow::Result<()> {
             crate::tui::app::WorkMode::Discuss
         } else {
             crate::tui::app::WorkMode::Execute
-        },
-    );
+        }
+    });
+    app.init_work_mode(work_mode);
+    // Penting: policy harus mengikuti mode yang dipulihkan, bukan sebaliknya.
+    policy.set_mode(work_mode.to_permission());
     refresh_status(&mut app, &session, &mode);
     app.set_verbose(verbose);
     app.load_history(initial);
@@ -326,6 +343,9 @@ pub async fn run(deps: TuiDeps, initial: Vec<Message>) -> anyhow::Result<()> {
                                 // mode diskusi membuat mutating tool ditolak
                                 // oleh policy sebelum tool dijalankan.
                                 policy.set_mode(work.to_permission());
+                                // Bertahan antar sesi: guardrail yang reset
+                                // diam-diam adalah guardrail yang salah.
+                                persistence.set_mode(work.label());
                                 refresh_status(&mut app, &session, &mode);
                             }
                             Command::Help => {}
@@ -481,16 +501,14 @@ fn save_tool_output(cwd: &str, tool: &str, body: &str) -> std::io::Result<String
 
 fn refresh_status(app: &mut App, session: &ModelSession, _mode: &str) {
     let model = session.model();
-    // Mode kerja ditampilkan dari state aplikasi, bukan dari argumen `--mode`:
-    // pengguna bisa menggantinya saat sesi berjalan lewat `/discuss` dan
-    // `/execute`, jadi label di layar harus mengikuti state itu.
-    let mode = app.work_mode().label();
+    // Mode kerja **tidak** ikut di sini: ia dirender di kolom tetap di
+    // `draw_status` supaya tidak bisa terpotong oleh truncate.
     let status = if !session.provider_connected() {
-        format!("no provider · {mode} · /connect")
+        "no provider · /connect".to_string()
     } else if model.trim().is_empty() {
-        format!("no model · {mode} · /model")
+        "no model · /model".to_string()
     } else {
-        format!("{model} · {mode}")
+        model
     };
     app.set_status(status);
     app.set_ready(session.configured());
@@ -525,7 +543,19 @@ fn spawn_turn(
     let policy = deps.policy.clone();
     let hooks = deps.hooks.clone();
     let tool_ctx = deps.tool_ctx.clone();
-    let system = deps.system.clone();
+    // Mode disuntikkan ke system prompt: penegakan tetap di policy, tetapi
+    // model perlu tahu aturannya lebih awal agar tidak menabrak penolakan.
+    let system = {
+        let note = app.work_mode().system_note();
+        match deps.system.as_deref() {
+            Some(base) if !base.trim().is_empty() => Some(format!(
+                "{base}
+
+{note}"
+            )),
+            _ => Some(note.to_string()),
+        }
+    };
     let max_steps = deps.max_steps;
     let verify_command = deps.verify_command.clone();
     let persistence = deps.persistence.clone();
@@ -863,14 +893,44 @@ fn draw_status(frame: &mut ratatui::Frame, area: Rect, app: &App, cwd: &str, hid
         truncate(&sanitize(cwd), 28)
     };
 
+    // Mode kerja dirender di kolom tetap, **di luar** string yang dipotong.
+    // Ia state keselamatan: kalau ikut terpotong di layar sempit, pengguna bisa
+    // mengira sedang di mode eksekusi padahal tidak.
+    // Lebar kolom = label + satu spasi pemisah, tetapi teks yang dirender
+    // adalah label saja: kalau spasinya ikut dirender, karakter terakhir label
+    // bisa terdorong keluar kolom dan terpotong ("discus").
+    let label = app.work_mode().label();
+    let mode_width = label.chars().count() as u16 + 1;
+    // Kolom kanan (path / hint) dilepas lebih dulu saat layar sempit: label
+    // mode tidak boleh ikut mengecil karena Layout membagi sisa secara
+    // proporsional ketika total constraint melebihi lebar area.
+    let right_width = 30u16.min(area.width.saturating_sub(mode_width + 4));
+    let middle_width = area.width.saturating_sub(mode_width + right_width).max(1);
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(10), Constraint::Length(30)])
+        .constraints([
+            Constraint::Length(mode_width),
+            Constraint::Length(middle_width),
+            Constraint::Length(right_width),
+        ])
         .split(area);
-    frame.render_widget(Paragraph::new(left).style(dim), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(label).style(
+            Style::default()
+                .fg(if app.work_mode() == crate::tui::app::WorkMode::Discuss {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
+        chunks[0],
+    );
+    frame.render_widget(Paragraph::new(left).style(dim), chunks[1]);
     frame.render_widget(
         Paragraph::new(right).style(dim).alignment(Alignment::Right),
-        chunks[1],
+        chunks[2],
     );
 }
 
@@ -950,10 +1010,21 @@ fn draw_approval(frame: &mut ratatui::Frame, area: Rect, approval: &ApprovalView
     } else {
         format!("{}  {}", approval.tool, approval.summary)
     };
-    let category_line = format!(
-        "category: {}   ·   [a] allows this tool, [c] allows all '{}' tools",
-        approval.category, approval.category
-    );
+    // Kategori yang belum dipetakan (`other`) tidak boleh diberikan lewat satu
+    // tombol, jadi jangan tawarkan `[c]` untuknya — jangan tampilkan tombol
+    // yang tidak melakukan apa-apa.
+    let category_label = crate::approval::Category::of_tool(&approval.tool);
+    let category_line = if category_label.is_grantable() {
+        format!(
+            "category: {}   ·   [a] allows this tool, [c] allows all '{}' tools",
+            approval.category, approval.category
+        )
+    } else {
+        format!(
+            "category: {}   ·   [a] allows this tool only (category too broad to grant)",
+            approval.category
+        )
+    };
 
     let mut lines = vec![
         TLine::raw(""),
@@ -1588,5 +1659,66 @@ mod output_render_tests {
             }
             println!("|{row}|");
         }
+    }
+}
+
+/// W10: label mode kerja adalah state keselamatan, jadi tidak boleh terpotong.
+///
+/// Dulu mode ada di tengah string `status` yang dipotong `truncate(..., 60)`.
+/// Di layar sempit pengguna bisa melihat "execute" padahal sedang "discuss".
+#[cfg(test)]
+mod work_mode_rendering_tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn status_row(app: &App, width: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, 1)).expect("backend");
+        terminal
+            .draw(|frame| {
+                draw_status(
+                    frame,
+                    frame.area(),
+                    app,
+                    "D:/a/very/long/path/that/would/eat/the/room",
+                    HiddenLines::default(),
+                );
+            })
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        (0..width)
+            .map(|x| buffer[(x, 0)].symbol().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn mode_label_is_visible_even_on_a_narrow_screen() {
+        for width in [40u16, 30, 24, 20] {
+            let mut app = App::new("");
+            app.init_work_mode(app::WorkMode::Discuss);
+            let row = status_row(&app, width);
+            assert!(
+                row.contains("discuss"),
+                "lebar {width}: label mode hilang dari status bar: {row:?}"
+            );
+
+            let mut app = App::new("");
+            app.init_work_mode(app::WorkMode::Execute);
+            let row = status_row(&app, width);
+            assert!(
+                row.contains("execute"),
+                "lebar {width}: label mode hilang dari status bar: {row:?}"
+            );
+        }
+    }
+
+    /// Dua mode berbeda harus terlihat berbeda di baris status.
+    #[test]
+    fn the_two_modes_look_different() {
+        let mut discuss = App::new("");
+        discuss.init_work_mode(app::WorkMode::Discuss);
+        let mut execute = App::new("");
+        execute.init_work_mode(app::WorkMode::Execute);
+        assert_ne!(status_row(&discuss, 80), status_row(&execute, 80));
     }
 }

@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use minic::tools::bash::Bash;
-use minic_core::permission::PermissionMode;
 use minic_core::tool::{Tool, ToolContext};
 use serde_json::json;
 
@@ -21,10 +20,7 @@ fn temp_root(tag: &str) -> PathBuf {
 #[tokio::test]
 async fn unknown_sandbox_value_fails_closed() {
     let root = temp_root("bogus");
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
 
     let result = Bash::new("bogus")
         .execute(json!({ "command": "echo hi > marker.txt" }), &ctx)
@@ -44,10 +40,7 @@ async fn unknown_sandbox_value_fails_closed() {
 #[tokio::test]
 async fn off_runs_on_host() {
     let root = temp_root("off");
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
 
     let result = Bash::new("off")
         .execute(json!({ "command": "echo hi > marker.txt" }), &ctx)

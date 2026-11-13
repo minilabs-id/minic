@@ -6,7 +6,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use minic::mcp::McpManager;
 use minic::tools::mcp::{McpCall, McpList};
-use minic_core::permission::PermissionMode;
 use minic_core::tool::{Tool, ToolContext};
 use serde_json::json;
 
@@ -44,10 +43,7 @@ async fn mcp_connect_list_call_roundtrip() {
     );
     assert_eq!(manager.names(), vec!["demo".to_string()]);
 
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
 
     let listed = McpList::new(manager.clone())
         .execute(json!({}), &ctx)
@@ -73,10 +69,7 @@ async fn unknown_server_reports_available() {
     let root = temp_root("unknown");
     write_mcp_config(&root);
     let manager = Arc::new(McpManager::connect(&root).await);
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
 
     let result = McpCall::new(manager)
         .execute(

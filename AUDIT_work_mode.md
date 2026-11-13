@@ -11,6 +11,10 @@ bukan pada penegakan, melainkan pada **apa yang model dan pengguna ketahui** ser
 **kebocoran di jalur lain**. Ditemukan 4 kebocoran nyata (W1–W4) dan 6 kekurangan
 desain (W5–W10).
 
+> **Status: SEMUA TEMUAN SUDAH DIPERBAIKI** (v0.3.1). Tiap perbaikan dijaga test
+> yang dibuktikan *load-bearing* lewat mutasi (kode dikembalikan → test gagal).
+> Lihat tabel di Bagian 3 untuk ringkasan dan test penjaganya.
+
 ---
 
 ## Bagian 1 — Kebocoran (harus diperbaiki)
@@ -47,6 +51,12 @@ Perbaikan: jalankan verifikasi lewat `permissions.decide` yang sama seperti tool
 biasa, dan emit `ToolDecided` dengan keputusan sebenarnya (sekarang selalu
 `DecisionKind::Always` — itu **klaim palsu** di jejak audit).
 
+> **✅ DIPERBAIKI.** `run_verify` sekarang memanggil `permissions.decide` dan
+> mengembalikan `(result, DecisionKind, reason)`; `ToolDecided` melaporkan
+> keputusan sebenarnya. Penolakan menjadi hasil tool "permission denied" plus
+> `Note` "verification NOT RUN", bukan klaim lulus. Penjaga:
+> `probe_w1_verify_bypass.rs` (assertion sudah dibalik) + test `fase_b_verify`.
+
 ### W2. `tool_ctx.permission_mode` adalah state mati yang menyesatkan
 
 `ToolContext.permission_mode` diisi sekali saat startup
@@ -60,6 +70,10 @@ berkata `auto`.
 
 Perbaikan: hapus field (atau isi dari `policy.mode()` setiap turn, lalu dokumentasi
 tegas bahwa ia **snapshot**, bukan mode hidup). Menghapus lebih jujur.
+
+> **✅ DIPERBAIKI.** Field dihapus dari `ToolContext` beserta semua konstruksinya.
+> Satu-satunya sumber kebenaran adalah `PermissionHandler`, yang dibaca per
+> keputusan.
 
 ### W3. Model tidak pernah diberi tahu mode aktif
 
@@ -84,6 +98,10 @@ Perbaikan: suntikkan satu baris ke system prompt sesuai mode, mis.
 
 Hasil yang diharapkan: penolakan jarang terjadi, bukan hanya aman.
 
+> **✅ DIPERBAIKI.** `WorkMode::system_note()` disuntikkan ke system prompt di
+> `spawn_turn`. Test: `system_prompt_carries_the_mode_note`,
+> `discuss_mode_tells_the_model_it_cannot_write`.
+
 ### W4. Mode tidak pernah masuk ke riwayat percakapan
 
 `set_work_mode` hanya memanggil `push_note`, yang menulis ke `transcript` —
@@ -97,6 +115,9 @@ pesan user pertama setelah pergantian mode.
 
 ---
 
+> **✅ DIPERBAIKI.** `set_work_mode` menambahkan `Message::system("[mode changed] …")`
+> ke `messages`. Test: `switching_mode_records_itself_in_model_history`.
+
 ## Bagian 2 — Kekurangan desain
 
 ### W5. Mode tidak bertahan antar sesi
@@ -108,6 +129,11 @@ ke `execute` adalah default yang salah.
 
 Perbaikan: simpan mode di `SessionInfo` (sudah ada di `store.rs`) atau di
 `config.toml`, dan pulihkan saat resume. `--mode` eksplisit tetap menang.
+
+> **✅ DIPERBAIKI.** Kolom `mode` di tabel `sessions` (migrasi aditif);
+> dipulihkan saat start kecuali `--mode` diberikan eksplisit. Label tak dikenal
+> → `None` (tidak pernah naik ke eksekusi). Test: `work_mode_survives_a_restart`,
+> `work_mode_is_per_session`, `unknown_stored_mode_is_ignored_rather_than_escalated`.
 
 ### W6. `SetMode` bisa terjadi di tengah turn, efeknya tidak terduga
 
@@ -124,6 +150,10 @@ transcript: *"applies from the next tool call; the running turn may still finish
 its current step"*. Dan bila pengguna ingin rem darurat, arahkan ke `Esc`
 (membatalkan turn) alih-alih mode.
 
+> **✅ DIPERBAIKI (sebagian, sesuai desain).** Semantik "berlaku untuk tool
+> berikutnya" dipertahankan, tetapi sekarang **dikatakan** di transcript saat turn
+> sedang berjalan, beserta petunjuk `Esc` untuk menghentikannya.
+
 ### W7. `discuss` tidak mencegah `delegate_task`
 
 `delegate_task` ditandai `is_mutating() == true`, jadi di discuss ia ditolak.
@@ -136,6 +166,10 @@ membuat `delegate_task` kurang berguna daripada yang terlihat.
 Perbaikan: teruskan mode induk ke subagent, atau dokumentasikan tegas bahwa
 subagent selalu read-only.
 
+> **✅ DIPERBAIKI.** `SubAgentPool::with_policy` mewariskan policy induk;
+> `may_write()` menentukan apakah `write_file`/`edit` didaftarkan. Induk diskusi →
+> delegasi read-only. Test: `subagent_inherits_the_parent_work_mode`.
+
 ### W8. Kategori approval menggabungkan tool yang tidak sejenis
 
 `Category::of_tool` memetakan semua nama tak dikenal ke `Category::Other`.
@@ -146,6 +180,11 @@ menekan `c` ("izinkan seluruh kategori") pada `mcp_call` juga mengizinkan
 Perbaikan: beri `Category::Mcp` dan `Category::Delegate` sendiri, dan jangan
 sertakan `Other` dalam tombol "whole category" — kategori `Other` sebaiknya
 memaksa `Tool(..)` saja.
+
+> **✅ DIPERBAIKI.** `Category::Mcp` dan `Category::Delegate` dipisah; `Other`
+> tidak lagi *grantable* (`is_grantable()`), dan modal tidak menawarkan `[c]`
+> untuknya. Test: `mcp_and_delegate_do_not_share_a_category`,
+> `unknown_tools_are_not_grantable_as_a_category`.
 
 ### W9. `set_mode` tidak menyentuh set `always` yang sudah diberikan
 
@@ -158,6 +197,10 @@ ditanya?"
 Perbaikan: biarkan (dan dokumentasikan), atau bersihkan set `always` saat mode
 berubah ke arah yang lebih permisif, supaya pengguna menyetujui ulang.
 
+> **✅ DIPERBAIKI.** `set_mode` mengosongkan set `always` dan memakai `to_u8()`
+> (bukan `as u8`). Test: `set_mode_discards_always_grants`,
+> `mode_round_trips_through_the_atomic`.
+
 ### W10. Label mode bersaing dengan informasi lain di satu baris
 
 `model · discuss · ctx 128k`. Di layar sempit, `truncate(&sanitize(app.status()), 60)`
@@ -168,6 +211,10 @@ Perbaikan: tampilkan mode di kolom tetap (mis. awal baris, atau badge kanan),
 bukan di tengah string yang dipotong.
 
 ---
+
+> **✅ DIPERBAIKI.** Mode dirender di kolom `Length` tetap, di luar string yang
+> dipotong; kolom kanan yang mengalah lebih dulu. Test:
+> `mode_label_is_visible_even_on_a_narrow_screen` (lebar 40/30/24/20).
 
 ## Bagian 3 — Yang sudah benar (jangan diubah)
 

@@ -27,10 +27,7 @@ async fn fake_run_event_stream_is_stable() {
     registry.register(Box::new(ReadFile));
 
     let policy = SimplePolicy::new(root.clone(), PermissionMode::Auto);
-    let ctx = ToolContext {
-        cwd: root,
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root };
 
     let mut history = ContextStore::new();
     history.push(Message::user("inspect"));

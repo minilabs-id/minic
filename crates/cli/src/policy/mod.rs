@@ -90,7 +90,22 @@ impl SimplePolicy {
     /// Ganti mode saat sesi berjalan. Dipakai TUI untuk beralih antara mode
     /// diskusi (read-only) dan eksekusi tanpa restart.
     pub fn set_mode(&self, mode: PermissionMode) {
-        self.mode.store(mode as u8, Ordering::SeqCst);
+        // Pakai `to_u8`, bukan `mode as u8`: diskriminan enum bisa berubah
+        // urutan tanpa terlihat, dan `from_u8` di sisi baca memakai pemetaan
+        // eksplisit. Dua pemetaan yang berbeda = bug yang menunggu.
+        self.mode.store(mode.to_u8(), Ordering::SeqCst);
+        // Izin "selalu" adalah keputusan untuk mode **saat itu**. Membawanya
+        // melewati pergantian mode akan membuat tool yang tadinya tidak
+        // berbahaya (mis. `bash` di eksekusi) tetap diizinkan saat pengguna
+        // pindah ke diskusi. Buang supaya pergantian mode benar-benar
+        // mengembalikan pengguna ke pertanyaan izin.
+        let always = match &self.ask_route {
+            AskRoute::Terminal { always } => always,
+            AskRoute::Tui { always, .. } => always,
+        };
+        if let Ok(mut always) = always.lock() {
+            always.clear();
+        }
     }
 
     fn always_allowed(&self, tool_name: &str) -> bool {
@@ -257,5 +272,94 @@ impl PermissionHandler for SimplePolicy {
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod mode_switch_tests {
+    use super::*;
+
+    fn policy(mode: PermissionMode) -> SimplePolicy {
+        SimplePolicy::new(std::path::PathBuf::from("."), mode)
+    }
+
+    /// `set_mode` harus benar-benar mengubah mode yang dibaca `decide`.
+    #[test]
+    fn set_mode_is_visible_to_decide() {
+        let policy = policy(PermissionMode::Ask);
+        assert_eq!(policy.mode(), PermissionMode::Ask);
+        policy.set_mode(PermissionMode::ReadOnly);
+        assert_eq!(policy.mode(), PermissionMode::ReadOnly);
+        policy.set_mode(PermissionMode::Auto);
+        assert_eq!(policy.mode(), PermissionMode::Auto);
+    }
+
+    /// `set_mode` menyimpan lewat `to_u8` dan `mode()` membacanya kembali;
+    /// keduanya harus sepakat untuk **setiap** varian. Kalau salah satu memakai
+    /// `as u8`, menambah varian baru akan menggeser nilainya diam-diam.
+    #[test]
+    fn mode_round_trips_through_the_atomic() {
+        for mode in [
+            PermissionMode::Auto,
+            PermissionMode::Ask,
+            PermissionMode::ReadOnly,
+        ] {
+            let policy = policy(PermissionMode::Auto);
+            policy.set_mode(mode);
+            assert_eq!(policy.mode(), mode, "mode {mode} tidak round-trip");
+            // Nilai yang tersimpan juga harus konsisten dengan `from_u8`.
+            assert_eq!(
+                PermissionMode::from_u8(mode.to_u8()),
+                mode,
+                "to_u8/from_u8 tidak sepakat untuk {mode}"
+            );
+        }
+    }
+
+    /// `set_mode` membuang izin "selalu": keputusan itu milik mode lama.
+    #[test]
+    fn set_mode_discards_always_grants() {
+        let policy = policy(PermissionMode::Auto).with_ask_route(AskRoute::Terminal {
+            always: Mutex::new(HashSet::new()),
+        });
+        // Simulasi "izinkan selalu" untuk bash.
+        let always = match &policy.ask_route {
+            AskRoute::Terminal { always } => always,
+            AskRoute::Tui { .. } => unreachable!(),
+        };
+        always
+            .lock()
+            .expect("lock")
+            .insert(Scope::Tool("bash".to_string()));
+        assert!(policy.always_allowed("bash"));
+
+        policy.set_mode(PermissionMode::ReadOnly);
+        assert!(
+            !policy.always_allowed("bash"),
+            "izin 'selalu' harus dibuang saat mode berganti"
+        );
+    }
+
+    /// Mode diskusi menolak tool yang mengubah, apa pun izin sebelumnya.
+    #[test]
+    fn discuss_denies_mutating_tools() {
+        let policy = policy(PermissionMode::ReadOnly);
+        let args = serde_json::json!({ "path": "a.txt" });
+        assert!(matches!(
+            futures_executor_block_on(policy.decide("write_file", &args, true)),
+            Decision::Deny(_)
+        ));
+    }
+
+    /// Helper sinkron kecil supaya test tidak perlu runtime async penuh.
+    fn futures_executor_block_on<F: std::future::Future>(future: F) -> F::Output {
+        use std::task::{Context, Poll, Waker};
+        let mut future = std::pin::pin!(future);
+        let mut cx = Context::from_waker(Waker::noop());
+        loop {
+            if let Poll::Ready(value) = future.as_mut().poll(&mut cx) {
+                return value;
+            }
+        }
     }
 }

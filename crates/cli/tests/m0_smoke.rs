@@ -21,10 +21,7 @@ async fn fake_provider_runs_one_tool_then_finishes() {
     registry.register(Box::new(ReadFile));
 
     let policy = SimplePolicy::new(root.clone(), PermissionMode::Auto);
-    let ctx = ToolContext {
-        cwd: root,
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root };
 
     let mut history = ContextStore::new();
     history.push(Message::user("inspect the project"));

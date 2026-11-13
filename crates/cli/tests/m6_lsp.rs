@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use minic::tools::lsp::LspDiagnostics;
-use minic_core::permission::PermissionMode;
 use minic_core::tool::{Tool, ToolContext};
 use serde_json::json;
 
@@ -35,10 +34,7 @@ async fn returns_diagnostics_from_server() {
     write_lsp_config(&root);
     std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
 
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
     let result = LspDiagnostics
         .execute(json!({ "path": "main.rs" }), &ctx)
         .await
@@ -59,10 +55,7 @@ async fn returns_diagnostics_from_server() {
 async fn unconfigured_extension_reports_error() {
     let root = temp_root("noext");
     std::fs::write(root.join("main.py"), "print('x')\n").unwrap();
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
     let result = LspDiagnostics
         .execute(json!({ "path": "main.py" }), &ctx)
         .await

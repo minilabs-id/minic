@@ -9,7 +9,7 @@ use futures_core::future::BoxFuture;
 use minic_core::agent::{NoopHooks, RunOptions, run_agent};
 use minic_core::error::AgentError;
 use minic_core::history::ContextStore;
-use minic_core::permission::{AllowAll, PermissionMode};
+use minic_core::permission::AllowAll;
 use minic_core::provider::{BoxStream, FinishReason, ModelProvider, ProviderEvent, StreamRequest};
 use minic_core::tool::{Tool, ToolContext, ToolRegistry};
 use minic_core::types::{Message, Role, ToolResult};
@@ -142,7 +142,6 @@ fn setup(fail_verify: bool) -> Setup {
         },
         ctx: ToolContext {
             cwd: std::env::temp_dir(),
-            permission_mode: PermissionMode::Auto,
         },
         fired: Arc::new(Mutex::new(false)),
         ran,
@@ -247,7 +246,6 @@ async fn verification_does_not_run_when_nothing_was_mutated() {
     history.push(Message::user("look around"));
     let ctx = ToolContext {
         cwd: std::env::temp_dir(),
-        permission_mode: PermissionMode::Auto,
     };
 
     struct ReadOnlyProvider;

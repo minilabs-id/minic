@@ -8,7 +8,6 @@ use minic_core::compaction::mechanical_compact;
 use minic_core::error::AgentError;
 use minic_core::events::AgentEvent;
 use minic_core::history::ContextStore;
-use minic_core::permission::PermissionMode;
 use minic_core::provider::{BoxStream, FinishReason, ModelProvider, ProviderEvent, StreamRequest};
 use minic_core::tool::{ToolContext, ToolRegistry};
 use minic_core::types::{Message, Role, ToolCall, ToolResult};
@@ -98,10 +97,7 @@ impl ModelProvider for StopProvider {
 #[tokio::test]
 async fn agent_emits_context_compacted_when_over_budget() {
     let root = temp_root("e2e");
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
     let registry = ToolRegistry::new();
 
     let mut history = ContextStore::new();

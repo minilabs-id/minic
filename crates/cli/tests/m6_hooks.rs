@@ -14,7 +14,7 @@ use minic::tools::write_file::WriteFile;
 use minic_core::agent::{AgentHooks, RunOptions, run_agent};
 use minic_core::error::AgentError;
 use minic_core::history::ContextStore;
-use minic_core::permission::{Decision, PermissionMode};
+use minic_core::permission::Decision;
 use minic_core::provider::{BoxStream, FinishReason, ModelProvider, ProviderEvent, StreamRequest};
 use minic_core::tool::{ToolContext, ToolRegistry};
 use minic_core::types::{Message, Role};
@@ -163,10 +163,7 @@ async fn denying_pre_hook_prevents_disk_write() {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(WriteFile));
     let hooks = FileHooks::new(root.clone());
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
 
     let mut history = ContextStore::new();
     history.push(Message::user("write x.txt"));
@@ -262,10 +259,7 @@ async fn denying_pre_hook_blocks_even_after_ask_approval() {
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(WriteFile));
     let hooks = FileHooks::new(root.clone());
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Ask,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
 
     let mut history = ContextStore::new();
     history.push(Message::user("write x.txt"));

@@ -56,6 +56,31 @@ impl SessionPersistence {
     pub fn store(&self) -> &Mutex<SessionStore> {
         &self.store
     }
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Mode kerja tersimpan untuk sesi ini.
+    pub fn mode(&self) -> Option<String> {
+        let store = match self.store.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        store.session_mode(&self.session_id).ok().flatten()
+    }
+
+    /// Simpan mode kerja. Kegagalan tidak menggagalkan turn: mode tetap
+    /// berlaku di sesi berjalan, hanya tidak bertahan setelah restart.
+    pub fn set_mode(&self, mode: &str) {
+        let store = match self.store.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Err(error) = store.set_session_mode(&self.session_id, mode) {
+            tracing::warn!(%error, "persist mode failed");
+        }
+    }
 }
 
 impl HistoryPersistence for SessionPersistence {
@@ -112,7 +137,36 @@ impl SessionStore {
                 PRIMARY KEY (session_id, seq)
             );",
         )?;
+        // Migrasi tambahan: kolom `mode` menyimpan mode kerja (`discuss` /
+        // `execute`) agar mode diskusi tidak diam-diam kembali ke eksekusi saat
+        // sesi di-resume. `ALTER TABLE ... ADD COLUMN` gagal bila kolom sudah
+        // ada, jadi kegagalan "duplicate column" diabaikan.
+        let _ = self
+            .conn
+            .execute("ALTER TABLE sessions ADD COLUMN mode TEXT", []);
         Ok(())
+    }
+
+    /// Simpan mode kerja untuk sesi ini.
+    pub fn set_session_mode(&self, id: &str, mode: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE sessions SET mode = ?2 WHERE id = ?1",
+            params![id, mode],
+        )?;
+        Ok(())
+    }
+
+    /// Mode kerja tersimpan untuk sesi ini, bila pernah dicatat.
+    pub fn session_mode(&self, id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT mode FROM sessions WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
     }
 
     pub fn upsert_session(&self, id: &str, model: &str, cwd: &str) -> Result<(), StoreError> {

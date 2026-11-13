@@ -325,15 +325,8 @@ async fn main() -> Result<()> {
     // Sub-agent pool (tanpa nesting). Pool membaca sesi model yang sama, jadi
     // pergantian model di TUI ikut terpakai. `max_subagents` hanya boleh
     // menurunkan batas, tidak menaikkannya.
-    let subagent_pool = Arc::new(minic::subagent::SubAgentPool::with_capacity(
-        model_session.clone(),
-        system.clone(),
-        cli.max_steps.min(30),
-        root.clone(),
-        cfg.max_subagents.unwrap_or(minic::subagent::MAX_SUBAGENTS),
-    ));
-    registry.register(Box::new(tools::delegate::DelegateTask::new(subagent_pool)));
-
+    // Pool sub-agent dibuat setelah policy di bawah, agar bisa mewarisi mode
+    // kerja induk. Lihat `SubAgentPool::with_policy`.
     // MCP (best-effort): server yang gagal dicatat, bukan menggagalkan startup.
     let mcp_manager = Arc::new(minic::mcp::McpManager::connect(&root).await);
     for error in mcp_manager.errors() {
@@ -371,10 +364,23 @@ async fn main() -> Result<()> {
         }),
         None => policy,
     };
-    let tool_ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: mode,
-    };
+    let policy = Arc::new(policy);
+
+    // Sub-agent mewarisi policy induk: mode diskusi membuat delegasi juga
+    // read-only, mode eksekusi mengizinkannya menulis. Dulu selalu read-only,
+    // sehingga `delegate_task` tidak berguna untuk pekerjaan tulis.
+    let subagent_pool = Arc::new(
+        minic::subagent::SubAgentPool::with_capacity(
+            model_session.clone(),
+            system.clone(),
+            cli.max_steps.min(30),
+            root.clone(),
+            cfg.max_subagents.unwrap_or(minic::subagent::MAX_SUBAGENTS),
+        )
+        .with_policy(policy.clone()),
+    );
+    registry.register(Box::new(tools::delegate::DelegateTask::new(subagent_pool)));
+    let tool_ctx = ToolContext { cwd: root.clone() };
     let hooks = minic::hooks_impl::FileHooks::new(root.clone());
 
     let session_id = match cli.session.clone() {
@@ -405,7 +411,7 @@ async fn main() -> Result<()> {
             base_url,
             api_key,
             registry: Arc::new(registry),
-            policy: Arc::new(policy),
+            policy: policy.clone(),
             hooks: Arc::new(hooks),
             tool_ctx,
             system: system.clone(),
@@ -464,7 +470,7 @@ async fn main() -> Result<()> {
     let outcome = match run_agent(
         provider.as_ref(),
         &registry,
-        &policy,
+        policy.as_ref(),
         &hooks,
         &mut history,
         &tool_ctx,

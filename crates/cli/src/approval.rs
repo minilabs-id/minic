@@ -25,7 +25,15 @@ pub enum Category {
     FileWrite,
     /// Menjalankan shell (`bash`).
     Shell,
-    /// Tool lain yang mengubah: `delegate_task`, `mcp_call`.
+    /// Memanggil server MCP (`mcp_call`, `mcp_list`). Dipisah dari `Other`
+    /// supaya "izinkan seluruh kategori" pada satu MCP call tidak diam-diam
+    /// mengizinkan delegasi subagent (dan sebaliknya).
+    Mcp,
+    /// Delegasi ke subagent (`delegate_task`).
+    Delegate,
+    /// Tool yang tidak dikenali. **Sengaja tidak punya cakupan kategori**:
+    /// mengizinkan kategori ini berarti mengizinkan setiap tool baru yang
+    /// belum dipetakan, yang terlalu luas untuk satu tombol.
     Other,
 }
 
@@ -35,8 +43,17 @@ impl Category {
             "read_file" | "grep" | "glob" | "lsp_diagnostics" => Category::Read,
             "write_file" | "edit" => Category::FileWrite,
             "bash" => Category::Shell,
+            "mcp_call" | "mcp_list" => Category::Mcp,
+            "delegate_task" => Category::Delegate,
             _ => Category::Other,
         }
+    }
+
+    /// Apakah kategori ini boleh diberikan lewat tombol "izinkan seluruh
+    /// kategori" (`c`). `Other` tidak boleh: isinya adalah tool yang belum
+    /// dipetakan, jadi cakupannya tidak dapat dijelaskan ke pengguna.
+    pub fn is_grantable(self) -> bool {
+        !matches!(self, Category::Other)
     }
 
     pub fn label(self) -> &'static str {
@@ -44,6 +61,8 @@ impl Category {
             Category::Read => "read",
             Category::FileWrite => "file-write",
             Category::Shell => "shell",
+            Category::Mcp => "mcp",
+            Category::Delegate => "delegate",
             Category::Other => "other",
         }
     }
@@ -187,7 +206,33 @@ mod tests {
         assert_eq!(Category::of_tool("grep"), Category::Read);
         assert_eq!(Category::of_tool("edit"), Category::FileWrite);
         assert_eq!(Category::of_tool("bash"), Category::Shell);
-        assert_eq!(Category::of_tool("delegate_task"), Category::Other);
+        assert_eq!(Category::of_tool("delegate_task"), Category::Delegate);
+        assert_eq!(Category::of_tool("mcp_call"), Category::Mcp);
+        assert_eq!(Category::of_tool("mcp_list"), Category::Mcp);
+        assert_eq!(Category::of_tool("some_future_tool"), Category::Other);
+    }
+
+    /// `ab` pada satu MCP call tidak boleh ikut mengizinkan delegasi subagent:
+    /// keduanya dulu berbagi `Other`.
+    #[test]
+    fn mcp_and_delegate_do_not_share_a_category() {
+        assert_ne!(
+            Category::of_tool("mcp_call"),
+            Category::of_tool("delegate_task")
+        );
+        assert_ne!(Category::of_tool("mcp_call"), Category::of_tool("bash"));
+    }
+
+    /// Kategori yang belum dipetakan tidak boleh diberikan lewat satu tombol.
+    #[test]
+    fn unknown_tools_are_not_grantable_as_a_category() {
+        assert!(!Category::Other.is_grantable());
+        for tool in ["read_file", "edit", "bash", "mcp_call", "delegate_task"] {
+            assert!(
+                Category::of_tool(tool).is_grantable(),
+                "{tool} harus bisa diberikan per kategori"
+            );
+        }
     }
 
     #[test]

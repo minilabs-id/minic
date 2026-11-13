@@ -72,10 +72,7 @@ async fn kernel_persists_at_every_turn_boundary() {
     registry.register(Box::new(WriteFile));
 
     let policy = SimplePolicy::new(root.clone(), PermissionMode::Auto);
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
 
     let mut history = ContextStore::new();
     history.push(Message::user("write x.txt"));
@@ -121,4 +118,52 @@ fn session_persistence_survives_and_resumes() {
     assert_eq!(loaded.len(), 2);
     assert_eq!(loaded[0].text(), "hello");
     assert_eq!(loaded[1].text(), "world");
+}
+
+/// W5: mode kerja harus bertahan antar sesi.
+///
+/// Tanpa ini, `minic --resume` pada sesi yang sedang berdiskusi diam-diam
+/// kembali ke eksekusi — guardrail yang reset sendiri adalah guardrail yang
+/// salah. Test dipasangkan dengan "mode hilang berarti eksekusi" agar tidak
+/// bisa lulus hanya karena semua sesi kebetulan diskusi.
+#[test]
+fn work_mode_survives_a_restart() {
+    let root = temp_root("mode-persist");
+    {
+        let store = SessionStore::open(&root).unwrap();
+        store.upsert_session("s-mode", "m", ".").unwrap();
+        let persistence = SessionPersistence::new(store, "s-mode");
+        assert_eq!(persistence.mode(), None, "sesi baru belum punya mode");
+        persistence.set_mode("discuss");
+    }
+
+    // Proses baru: store dibuka ulang.
+    let store = SessionStore::open(&root).unwrap();
+    let persistence = SessionPersistence::new(store, "s-mode");
+    assert_eq!(
+        persistence.mode().as_deref(),
+        Some("discuss"),
+        "mode diskusi harus dipulihkan, bukan kembali ke eksekusi"
+    );
+
+    // Dan bisa diganti lagi menjadi eksekusi.
+    persistence.set_mode("execute");
+    let store = SessionStore::open(&root).unwrap();
+    let persistence = SessionPersistence::new(store, "s-mode");
+    assert_eq!(persistence.mode().as_deref(), Some("execute"));
+}
+
+/// Mode tersimpan untuk satu sesi tidak boleh bocor ke sesi lain.
+#[test]
+fn work_mode_is_per_session() {
+    let root = temp_root("mode-per-session");
+    let store = SessionStore::open(&root).unwrap();
+    store.upsert_session("s-a", "m", ".").unwrap();
+    store.upsert_session("s-b", "m", ".").unwrap();
+    SessionPersistence::new(SessionStore::open(&root).unwrap(), "s-a").set_mode("discuss");
+
+    let a = SessionPersistence::new(SessionStore::open(&root).unwrap(), "s-a");
+    let b = SessionPersistence::new(SessionStore::open(&root).unwrap(), "s-b");
+    assert_eq!(a.mode().as_deref(), Some("discuss"));
+    assert_eq!(b.mode(), None, "sesi lain tidak boleh ikut diskusi");
 }

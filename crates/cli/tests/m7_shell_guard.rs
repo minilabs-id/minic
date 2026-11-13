@@ -116,10 +116,7 @@ async fn run(command: &str, tag: &str) -> (Arc<AtomicUsize>, String, Vec<String>
         inner: SimplePolicy::new(root.clone(), PermissionMode::Auto),
         asks: Arc::new(AtomicUsize::new(0)),
     };
-    let ctx = ToolContext {
-        cwd: root.clone(),
-        permission_mode: PermissionMode::Auto,
-    };
+    let ctx = ToolContext { cwd: root.clone() };
 
     let mut history = ContextStore::new();
     history.push(Message::user("run it"));
@@ -248,7 +245,6 @@ async fn run_bash_allowed(command: &str, root: &std::path::Path) -> String {
 
     let ctx = ToolContext {
         cwd: root.to_path_buf(),
-        permission_mode: PermissionMode::Auto,
     };
     let mut history = ContextStore::new();
     history.push(Message::user("go"));

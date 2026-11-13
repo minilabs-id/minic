@@ -33,7 +33,6 @@ impl Workspace {
     fn ctx(&self) -> ToolContext {
         ToolContext {
             cwd: self.root.clone(),
-            permission_mode: PermissionMode::Auto,
         }
     }
 }
