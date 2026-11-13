@@ -273,9 +273,9 @@ pub struct CompletionView {
 }
 
 impl CompletionView {
-    /// Tinggi popup: satu baris per entri + satu baris petunjuk.
+    /// Tinggi daftar: satu baris per nama, tanpa baris petunjuk.
     pub fn height(&self) -> u16 {
-        (self.items.len() as u16).saturating_add(1)
+        self.items.len() as u16
     }
 }
 

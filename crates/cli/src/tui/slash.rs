@@ -211,13 +211,12 @@ impl Completion {
         self.matches.get(selected).map(|&i| &COMMANDS[i])
     }
 
-    /// Tinggi yang dibutuhkan popup (baris entri + baris petunjuk).
+    /// Tinggi daftar: satu baris per nama, tanpa baris petunjuk.
     pub fn height(&self) -> usize {
         if !self.is_open() {
             return 0;
         }
-        // Baris petunjuk hanya muncul bila ada argumen / hint navigasi.
-        self.matches.len() + 1
+        self.matches.len()
     }
 }
 

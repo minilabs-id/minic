@@ -289,17 +289,20 @@ fn typing_slash_shows_the_command_list_on_screen() {
     // Tunggu sampai popup benar-benar ada di layar (bukan menebak lewat sleep).
     // Penanda yang dipakai adalah nama command, bukan judul: daftar sengaja
     // tanpa judul dan tanpa keterangan.
-    let screen = session.wait_screen(&["/model", "/connect", "Tab isi"], Duration::from_secs(10));
+    let screen = session.wait_screen(&["/model", "/connect", "/quit"], Duration::from_secs(10));
     session.quit();
 
     assert!(
         screen.contains("/model"),
         "entri /model tidak terlihat. Layar:\n{screen}"
     );
-    assert!(
-        screen.contains("Tab"),
-        "petunjuk tombol tidak terlihat. Layar:\n{screen}"
-    );
+    // Daftar polos: tidak ada border, judul, atau baris petunjuk.
+    for absent in ["commands", "Tab isi", "↑↓"] {
+        assert!(
+            !screen.contains(absent),
+            "daftar harus polos, tapi layar memuat {absent:?}. {screen}"
+        );
+    }
 }
 
 #[test]

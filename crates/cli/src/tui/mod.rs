@@ -602,65 +602,45 @@ fn draw_completion(
     }
     let dim = Style::default().add_modifier(Modifier::DIM);
 
-    // Daftar sengaja tanpa keterangan: cukup nama command. Lebar mengikuti
-    // nama terpanjang (termasuk penanda "❯ " dan "/"), dengan batas agar tidak
-    // keluar layar. `.clamp(low, high)` panic bila low > high, jadi batas bawah
-    // diturunkan ke lebar area pada layar sangat sempit.
+    // Polos: tanpa border, tanpa judul, tanpa petunjuk — hanya daftar nama yang
+    // mengambang di atas composer. Lebar mengikuti nama terpanjang (termasuk
+    // penanda "❯ " dan "/"), dibatasi agar tidak keluar layar. `.clamp(low,
+    // high)` panic bila low > high, jadi batas bawah diturunkan ke lebar area
+    // pada layar sangat sempit.
     let widest = completion
         .items
         .iter()
         .map(|name| name.chars().count() + 3)
         .max()
         .unwrap_or(10);
-    // Lebar harus menampung baris petunjuk juga, bukan hanya nama command —
-    // kalau tidak, petunjuk terpotong di popup sempit.
-    let hint_text = match completion.hint {
-        Some(arg) => format!("↑↓ · Tab isi · Esc · <{arg}>"),
-        None => "↑↓ · Tab isi · Esc".to_string(),
-    };
-    let hint_width = display_width(&hint_text) as u16 + 4;
-    let max_width = area.width.saturating_sub(2).max(1);
-    let min_width = 16.min(max_width);
-    let width = ((widest as u16).max(hint_width) + 4).clamp(min_width, max_width);
+    let max_width = area.width.saturating_sub(1).max(1);
+    let width = ((widest as u16).max(8)).min(max_width);
 
-    let desired = completion.height().min(area.height.saturating_sub(1));
-    let y = composer_area.y.saturating_sub(desired);
+    let height = completion.height();
+    // Daftar tidak boleh menutupi composer: naik tepat di atasnya.
+    let y = composer_area.y.saturating_sub(height);
     let x = (area.x + 1).min(area.right().saturating_sub(width));
-    let popup = Rect::new(x, y, width, desired);
+    let popup = Rect::new(x, y, width, height);
+    // Sel di bawah daftar harus dibersihkan: tanpa border, sisa teks transcript
+    // akan tercampur dengan nama command.
     frame.render_widget(Clear, popup);
 
-    let block = Block::default()
-        .borders(ratatui::widgets::Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(dim);
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-
-    // Sisakan satu baris di dalam border untuk petunjuk tombol.
-    let list_height = inner.height.saturating_sub(1);
-    let mut lines: Vec<TLine> = Vec::with_capacity(list_height as usize);
-    for (index, name) in completion.items.iter().enumerate() {
-        if index >= list_height as usize {
-            break;
-        }
-        let picked = index == completion.selected;
-        let marker = if picked { "❯ " } else { "  " };
-        let style = if picked {
-            Style::default().add_modifier(Modifier::BOLD)
-        } else {
-            dim
-        };
-        lines.push(TLine::from(Span::styled(format!("{marker}/{name}"), style)));
-    }
-    frame.render_widget(Paragraph::new(lines), inner);
-
-    if inner.height > 0 {
-        let hint_row = Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1);
-        frame.render_widget(
-            Paragraph::new(hint_text.clone()).style(dim.add_modifier(Modifier::ITALIC)),
-            hint_row,
-        );
-    }
+    let lines: Vec<TLine> = completion
+        .items
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let picked = index == completion.selected;
+            let marker = if picked { "❯ " } else { "  " };
+            let style = if picked {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                dim
+            };
+            TLine::from(Span::styled(format!("{marker}/{name}"), style))
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), popup);
 }
 /// Panel baca-saja untuk hasil tool penuh. Mengisi hampir seluruh layar dan
 /// hanya menggulir teks — tidak ada state agen yang bisa berubah dari sini.
@@ -1387,7 +1367,13 @@ mod output_render_tests {
         assert!(text.contains("/model"), "nama command terlihat: {text}");
         assert!(text.contains("/connect"), "nama command terlihat: {text}");
         assert!(text.contains("❯"), "penanda pilihan terlihat: {text}");
-        assert!(text.contains("Tab"), "petunjuk tombol terlihat: {text}");
+        // Daftar polos: tidak boleh ada border, judul, atau baris petunjuk.
+        for absent in ["│", "─", "commands", "Tab", "Esc", "↑↓"] {
+            assert!(
+                !text.contains(absent),
+                "daftar harus polos, tapi memuat {absent:?}: {text}"
+            );
+        }
     }
 
     /// Popup harus berada **di atas** composer, bukan menimpanya.

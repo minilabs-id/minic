@@ -353,10 +353,10 @@ Slash commands:
 | `/help` | show commands and keys |
 | `/quit`, `/exit` | leave the TUI |
 
-Typing `/` opens a small floating list of command names above the composer (no
-descriptions — just the names). It filters as you type; `↑`/`↓` move the
-selection, `Tab` or `Enter` fills in the command without running it, and `Esc`
-closes the list before clearing the composer. Commands that take an argument
+Typing `/` opens a bare floating list of command names above the composer — no
+window, no border, no descriptions, no hint row, just the names. It filters as
+you type; `↑`/`↓` move the selection, `Tab` or `Enter` fills in the command
+without running it, and `Esc` closes the list before clearing the composer. Commands that take an argument
 insert a trailing space so you can type the argument straight away. The list
 closes as soon as you type a space, because that means you are typing an
 argument rather than a command name.
