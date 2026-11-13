@@ -11,6 +11,28 @@ pub enum PermissionMode {
     ReadOnly,
 }
 
+impl PermissionMode {
+    /// Representasi stabil untuk penyimpanan atomik (host yang perlu mengganti
+    /// mode saat sesi berjalan tanpa memegang `&mut`).
+    pub fn to_u8(self) -> u8 {
+        match self {
+            PermissionMode::Auto => 0,
+            PermissionMode::Ask => 1,
+            PermissionMode::ReadOnly => 2,
+        }
+    }
+
+    /// Kebalikan `to_u8`. Nilai tak dikenal diperlakukan sebagai `Ask`:
+    /// mode paling aman yang masih bisa bekerja, bukan `Auto`.
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            0 => PermissionMode::Auto,
+            2 => PermissionMode::ReadOnly,
+            _ => PermissionMode::Ask,
+        }
+    }
+}
+
 impl fmt::Display for PermissionMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {

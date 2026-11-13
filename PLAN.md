@@ -164,6 +164,53 @@ ruang transcript. Keterangan tetap disimpan di registry dan dipakai `/help`:
 
 `/help` sekarang dibangun dari registry, jadi command baru otomatis muncul.
 
+### v0.2.2 — mode kerja, dan perbaikan dari riset
+
+**`/plan` dan `/verify` dihapus.** Keduanya sudah tampil di autocomplete dan
+`/help` tapi `run_command` tidak pernah mengeksekusinya — menekan Enter jatuh ke
+"unknown command". Fitur yang dijanjikan UI tapi tidak jalan lebih buruk
+daripada tidak ada. Rencana tersimpan tetap tersedia lewat `--plans` /
+`--plan-show` (jalur non-TUI), dan `--verify` tetap ada sebagai flag.
+
+**Dua mode kerja: `/discuss` dan `/execute`.** Riset singkat atas agent lain
+menunjukkan pola yang sama (Claude Code, Cursor, Codex: plan vs build), dan
+satu pelajaran penting: mode yang hanya ditegakkan lewat teks prompt **bocor**.
+OpenCode dilaporkan berulang kali mengubah berkas saat layar menampilkan mode
+rencana. Jadi di sini `/discuss` dipetakan ke `PermissionMode::ReadOnly` —
+mutating tool ditolak **di lapisan policy, sebelum tool berjalan**.
+
+- `SimplePolicy.mode` menjadi `Arc<AtomicU8>` supaya mode bisa diganti saat
+  sesi berjalan; `PermissionMode` dapat `to_u8`/`from_u8` (nilai tak dikenal →
+  `Ask`, bukan `Auto`).
+- Status line menampilkan mode aktif dan langsung berubah tanpa restart.
+- Alias diterima: `/discus`, `/chat`, `/exec`, `/build`.
+
+**Sisa temuan audit, dibereskan:**
+
+- `/clear` (alias `/new`) mengosongkan transcript **dan** riwayat model; sesi
+  (provider, model, cwd) tetap hidup.
+- `Esc` kini berhenti bertingkat: tutup daftar → bersihkan composer → hentikan
+  turn yang berjalan. Sebelumnya `Esc` pada composer kosong tidak melakukan
+  apa pun.
+- Composer bisa **disunting saat turn berjalan** (menyiapkan pesan berikutnya),
+  tapi `Enter` ditahan — dulu seluruh pengetikan diblokir oleh penyaring
+  `busy`.
+- `ctx 0%` pada sesi kosong diganti `ctx 128k` (kapasitas), lalu persentase
+  setelah ada isi.
+- Panel output tool bisa **disimpan ke berkas** dengan `s` →
+  `.minic/output/<tool>-<n>.txt`. Nama tool dibersihkan dari karakter path
+  supaya tidak bisa keluar folder; nomor naik agar tidak menimpa.
+
+**Bug ditemukan saat mengerjakan ini:** daftar autocomplete menggambar keluar
+buffer (panic `index outside of buffer`) di layar pendek setelah command
+bertambah menjadi 7. Tinggi daftar sekarang dijepit ke ruang di atas composer.
+
+Test: 247 → **269**. Termasuk pasangan end-to-end di `m11_work_mode.rs` yang
+membuktikan mode diskusi menolak tulis **dan tidak membuat berkas**, dengan
+mode eksekusi sebagai pembanding (kalau tidak, test pertama bisa lulus hanya
+karena berkasnya memang tidak pernah bisa dibuat). Mutasi balik: menghapus
+`Decision::Deny` untuk `ReadOnly` → 3 test gagal.
+
 ### Layar awal bersih
 
 `draw_welcome` dulu menampilkan dua baris penjelasan command ("Type a task and

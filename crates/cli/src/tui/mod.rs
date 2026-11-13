@@ -127,7 +127,7 @@ pub async fn run(deps: TuiDeps, initial: Vec<Message>) -> anyhow::Result<()> {
     } = deps;
     let turns = TurnDeps {
         registry,
-        policy,
+        policy: policy.clone(),
         hooks,
         tool_ctx,
         system,
@@ -157,6 +157,17 @@ pub async fn run(deps: TuiDeps, initial: Vec<Message>) -> anyhow::Result<()> {
     let _guard = TerminalGuard;
 
     let mut app = App::new("");
+    // `--mode readonly` setara dengan mode diskusi; selain itu eksekusi.
+    app.init_work_mode(
+        if matches!(
+            policy.mode(),
+            minic_core::permission::PermissionMode::ReadOnly
+        ) {
+            crate::tui::app::WorkMode::Discuss
+        } else {
+            crate::tui::app::WorkMode::Execute
+        },
+    );
     refresh_status(&mut app, &session, &mode);
     app.set_verbose(verbose);
     app.load_history(initial);
@@ -291,6 +302,32 @@ pub async fn run(deps: TuiDeps, initial: Vec<Message>) -> anyhow::Result<()> {
                                     );
                                 }
                             }
+                            Command::SaveOutput { tool, body } => {
+                                match save_tool_output(&cwd, &tool, &body) {
+                                    Ok(path) => {
+                                        app.close_output();
+                                        app.note(format!("saved: {path}"));
+                                    }
+                                    Err(err) => app.note(format!("save failed: {err}")),
+                                }
+                                refresh_status(&mut app, &session, &mode);
+                            }
+                            Command::Clear => {
+                                // `App::clear_conversation` sudah mengosongkan
+                                // `messages`; history kernel dibangun ulang dari
+                                // sana setiap turn, jadi model tidak lagi
+                                // melihat giliran sebelumnya. Yang perlu diurus
+                                // di sini hanya tampilan: status kembali ke
+                                // hitungan konteks nol.
+                                refresh_status(&mut app, &session, &mode);
+                            }
+                            Command::SetMode(work) => {
+                                // Tegakkan di policy, bukan hanya di prompt:
+                                // mode diskusi membuat mutating tool ditolak
+                                // oleh policy sebelum tool dijalankan.
+                                policy.set_mode(work.to_permission());
+                                refresh_status(&mut app, &session, &mode);
+                            }
                             Command::Help => {}
                         },
                         Action::Connect(input) => {
@@ -420,8 +457,34 @@ pub async fn run(deps: TuiDeps, initial: Vec<Message>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn refresh_status(app: &mut App, session: &ModelSession, mode: &str) {
+/// Tulis output tool ke `.minic/output/<tool>-<n>.txt` di workspace.
+///
+/// Nama berkas diberi nomor naik agar tidak menimpa hasil sebelumnya, dan nama
+/// tool dibersihkan dari karakter path agar tidak bisa keluar dari folder.
+/// Menulis berkas adalah tugas host — kernel tetap bebas I/O.
+fn save_tool_output(cwd: &str, tool: &str, body: &str) -> std::io::Result<String> {
+    let safe: String = tool
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let dir = std::path::Path::new(cwd).join(".minic").join("output");
+    std::fs::create_dir_all(&dir)?;
+    for n in 1..=999 {
+        let path = dir.join(format!("{safe}-{n}.txt"));
+        if !path.exists() {
+            std::fs::write(&path, body)?;
+            return Ok(path.display().to_string());
+        }
+    }
+    Err(std::io::Error::other("too many saved outputs (999)"))
+}
+
+fn refresh_status(app: &mut App, session: &ModelSession, _mode: &str) {
     let model = session.model();
+    // Mode kerja ditampilkan dari state aplikasi, bukan dari argumen `--mode`:
+    // pengguna bisa menggantinya saat sesi berjalan lewat `/discuss` dan
+    // `/execute`, jadi label di layar harus mengikuti state itu.
+    let mode = app.work_mode().label();
     let status = if !session.provider_connected() {
         format!("no provider · {mode} · /connect")
     } else if model.trim().is_empty() {
@@ -616,7 +679,13 @@ fn draw_completion(
     let max_width = area.width.saturating_sub(1).max(1);
     let width = ((widest as u16).max(8)).min(max_width);
 
-    let height = completion.height();
+    // Daftar harus muat di ruang antara baris 0 dan composer. Tanpa batas ini
+    // `y` bisa jatuh ke 0 dengan tinggi penuh dan menggambar keluar buffer
+    // (panic di layar pendek saat jumlah command bertambah).
+    let height = completion.height().min(composer_area.y);
+    if height == 0 {
+        return;
+    }
     // Daftar tidak boleh menutupi composer: naik tepat di atasnya.
     let y = composer_area.y.saturating_sub(height);
     let x = (area.x + 1).min(area.right().saturating_sub(width));
@@ -630,6 +699,7 @@ fn draw_completion(
     let lines: Vec<TLine> = completion
         .items
         .iter()
+        .take(height as usize)
         .enumerate()
         .map(|(index, name)| {
             let picked = index == completion.selected;
@@ -743,9 +813,9 @@ fn draw_welcome(frame: &mut ratatui::Frame, area: Rect, app: &App, cwd: &str) {
         TLine::styled("  minic", Style::default().add_modifier(Modifier::BOLD)),
         TLine::styled(
             format!(
-                "  {} · ctx {}%",
+                "  {} · {}",
                 truncate(&sanitize(app.status()), 60),
-                app.context_percent()
+                app.context_label()
             ),
             dim,
         ),
@@ -766,14 +836,14 @@ fn draw_status(frame: &mut ratatui::Frame, area: Rect, app: &App, cwd: &str, hid
     let mut left = if app.busy() {
         let label = app.current_tool().unwrap_or("thinking");
         format!(
-            "{} {} · {}s · ctx {}%",
+            "{} {} · {}s · {}",
             app.spinner_frame(),
             label,
             app.elapsed_secs(),
-            app.context_percent()
+            app.context_label()
         )
     } else {
-        format!("{} · ctx {}%", app.status(), app.context_percent())
+        format!("{} · {}", app.status(), app.context_label())
     };
     // Indikator posisi scroll dua arah: pengguna harus tahu ada konten di atas
     // yang tidak terlihat, bukan hanya di bawah.
@@ -810,9 +880,9 @@ fn draw_composer(frame: &mut ratatui::Frame, area: Rect, app: &App, composer: &a
         // Satu hint saja. Status line sudah memberi tahu provider/model, jadi
         // composer tidak mengulanginya; ia hanya menyebut aksi berikutnya.
         let hint = if app.busy() {
-            // Status line sudah menampilkan spinner + ^C cancel; composer
-            // dibiarkan tenang agar layar tidak punya dua indikator sibuk.
-            "  "
+            // Status line sudah menampilkan spinner. Composer menyebut satu
+            // hal yang tidak ada di sana: cara berhenti.
+            "  Esc to stop · you can type the next message  "
         } else if !app.ready() {
             "❯ /connect to set up a model…"
         } else if app.has_tool_output() {
@@ -1279,6 +1349,54 @@ mod output_render_tests {
     }
 
     #[test]
+    fn saving_tool_output_writes_a_numbered_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "minic_save_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.to_str().unwrap();
+
+        let first = save_tool_output(root, "bash", "baris satu").unwrap();
+        let second = save_tool_output(root, "bash", "baris dua").unwrap();
+        assert_ne!(
+            first, second,
+            "simpan kedua tidak boleh menimpa yang pertama"
+        );
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "baris satu");
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "baris dua");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Nama tool tidak boleh dipakai untuk keluar dari folder output.
+    #[test]
+    fn saving_cleans_path_separators_from_the_tool_name() {
+        let dir = std::env::temp_dir().join(format!(
+            "minic_save_esc_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.to_str().unwrap();
+
+        let path = save_tool_output(root, "../../evil", "x").unwrap();
+        assert!(
+            path.contains(".minic"),
+            "output harus tetap di dalam .minic: {path}"
+        );
+        assert!(
+            !path.contains(".."),
+            "nama berkas tidak boleh memuat '..': {path}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn output_panel_renders_without_panic_at_small_sizes() {
         for (width, height) in [(20u16, 5u16), (40, 10), (100, 30)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("backend");
@@ -1286,6 +1404,7 @@ mod output_render_tests {
                 title: "bash  cargo test".into(),
                 body: body(),
                 scroll: 0,
+                tool: "bash".into(),
             };
             terminal
                 .draw(|frame| draw_output(frame, frame.area(), &view))
@@ -1300,6 +1419,7 @@ mod output_render_tests {
             title: "bash  cargo test".into(),
             body: body(),
             scroll: 3,
+            tool: "bash".into(),
         };
         terminal
             .draw(|frame| draw_output(frame, frame.area(), &view))
@@ -1403,7 +1523,7 @@ mod output_render_tests {
             ratatui::style::Color::Cyan,
             "baris terpilih harus berwarna aksen, bukan ditandai panah: {named_rows:?}"
         );
-        for needle in ["model", "verify"] {
+        for needle in ["model", "execute"] {
             assert_ne!(
                 row_of(needle).2,
                 ratatui::style::Color::Cyan,

@@ -8,7 +8,9 @@ use futures_core::future::BoxFuture;
 use minic_core::permission::{Decision, PermissionHandler, PermissionMode};
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Jalur pertanyaan approval.
@@ -32,7 +34,10 @@ pub enum AskRoute {
 ///   fail-closed** (deny).
 pub struct SimplePolicy {
     root: PathBuf,
-    mode: PermissionMode,
+    /// Mode bisa diganti saat sesi berjalan (`/discus` ↔ `/execute`), jadi
+    /// disimpan atomik: pembacaan terjadi di jalur async, penulisan dari
+    /// handler tombol TUI.
+    mode: Arc<AtomicU8>,
     ask_route: AskRoute,
     /// `false` mematikan klasifikasi perintah `bash` (override eksplisit).
     guard_shell: bool,
@@ -44,7 +49,7 @@ impl SimplePolicy {
     pub fn new(root: PathBuf, mode: PermissionMode) -> Self {
         Self {
             root,
-            mode,
+            mode: Arc::new(AtomicU8::new(mode.to_u8())),
             ask_route: AskRoute::Terminal {
                 always: Mutex::new(HashSet::new()),
             },
@@ -79,7 +84,13 @@ impl SimplePolicy {
     }
 
     pub fn mode(&self) -> PermissionMode {
-        self.mode
+        PermissionMode::from_u8(self.mode.load(Ordering::SeqCst))
+    }
+
+    /// Ganti mode saat sesi berjalan. Dipakai TUI untuk beralih antara mode
+    /// diskusi (read-only) dan eksekusi tanpa restart.
+    pub fn set_mode(&self, mode: PermissionMode) {
+        self.mode.store(mode as u8, Ordering::SeqCst);
     }
 
     fn always_allowed(&self, tool_name: &str) -> bool {
@@ -148,7 +159,7 @@ impl PermissionHandler for SimplePolicy {
             }
 
             if mutating {
-                match self.mode {
+                match self.mode() {
                     PermissionMode::ReadOnly => {
                         return Decision::Deny("readonly mode: mutating tool denied".to_string());
                     }

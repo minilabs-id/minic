@@ -348,8 +348,9 @@ Slash commands:
 | `/connect`, `/provider`, `/login` | base URL + API key form |
 | `/model`, `/models` | fetch and pick a model |
 | `/model <id>` | set the model id directly |
-| `/plan` | review saved plans in `.minic/plans/` |
-| `/verify <CMD>` | run the verification command now |
+| `/discuss`, `/discus`, `/chat` | discuss mode: read-only, no file changes |
+| `/execute`, `/exec`, `/build` | execute mode: may modify the workspace |
+| `/clear`, `/new` | empty the conversation, keep the session |
 | `/help` | show commands and keys |
 | `/quit`, `/exit` | leave the TUI |
 
@@ -365,6 +366,35 @@ argument rather than a command name.
 The opening screen is deliberately bare: just the model/context line and the
 working directory. Command help lives in `/help`, not on the start screen, so
 every session begins without text you have to read past.
+
+### Work modes: discuss and execute
+
+The status line shows the active mode (`model · discuss · ctx 128k`).
+
+- **execute** (default) — the agent may change files and run commands.
+- **discuss** — read, search and explain only. This is enforced in the
+  permission layer (`PermissionMode::ReadOnly`), not merely requested in the
+  prompt: a mutating tool is **denied before it runs**, so the mode cannot
+  silently leak the way prompt-only modes do.
+
+Switch with `/discuss` and `/execute` at any point; the change takes effect on
+the next tool decision without restarting the session. `--mode readonly` starts
+in discuss mode.
+
+### Keys
+
+| Key | Action |
+|---|---|
+| `Enter` | submit (does nothing while a turn runs) |
+| `Ctrl+J` | newline in the composer |
+| `↑`/`↓` | history, or move through the autocomplete list |
+| `Tab` | complete the command name without running it |
+| `Esc` | close the list, else clear the composer, else **stop the running turn** |
+| `PgUp`/`PgDn` | scroll the transcript |
+| `Enter` on a tool line | open the full tool output; `s` saves it to `.minic/output/` |
+| `Ctrl+C` | cancel the turn, or quit when idle |
+
+You can keep typing while a turn runs; `Enter` is ignored until it finishes.
 
 Fullscreen interactive session with a deliberately small visual surface:
 

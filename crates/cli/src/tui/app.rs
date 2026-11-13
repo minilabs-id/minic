@@ -59,6 +59,38 @@ pub enum Action {
     Quit,
 }
 
+/// Mode kerja: apakah agent boleh mengubah berkas.
+///
+/// Ini bukan sekadar teks prompt — `Discuss` dipetakan ke
+/// `PermissionMode::ReadOnly`, jadi tool yang mengubah **ditolak di lapisan
+/// policy**, bukan hanya diminta untuk tidak dipakai. Mode yang hanya
+/// ditegakkan lewat prompt terbukti bocor di agent lain (agent tetap menulis
+/// berkas saat layar menampilkan "plan mode").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkMode {
+    /// Diskusi: baca, cari, jelaskan. Tidak ada mutasi.
+    Discuss,
+    /// Eksekusi: boleh mengubah workspace.
+    Execute,
+}
+
+impl WorkMode {
+    pub const fn label(self) -> &'static str {
+        match self {
+            WorkMode::Discuss => "discuss",
+            WorkMode::Execute => "execute",
+        }
+    }
+
+    /// Mode izin yang menegakkan mode kerja ini.
+    pub const fn to_permission(self) -> minic_core::permission::PermissionMode {
+        match self {
+            WorkMode::Discuss => minic_core::permission::PermissionMode::ReadOnly,
+            WorkMode::Execute => minic_core::permission::PermissionMode::Auto,
+        }
+    }
+}
+
 /// Perintah slash yang dikenali composer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -66,6 +98,15 @@ pub enum Command {
     Connect,
     /// Ambil daftar model (tanpa argumen) atau set model langsung (dengan id).
     Model(Option<String>),
+    /// Ganti mode kerja tanpa restart sesi.
+    SetMode(WorkMode),
+    /// Buang transcript dan riwayat percakapan; sesi tetap hidup.
+    Clear,
+    /// Simpan isi panel output ke berkas (driver yang menulis; kernel bebas I/O).
+    SaveOutput {
+        tool: String,
+        body: String,
+    },
     Help,
 }
 
@@ -287,6 +328,8 @@ pub struct OutputView {
     pub body: String,
     /// Baris yang sudah digulir dari atas.
     pub scroll: usize,
+    /// Nama tool asal output, dipakai menyusun nama berkas saat menyimpan.
+    pub tool: String,
 }
 
 const MAX_COMPOSER_ROWS: usize = 6;
@@ -322,6 +365,8 @@ pub struct App {
     ready: bool,
     /// Autocomplete slash command yang mengambang di atas composer.
     completion: Completion,
+    /// Mode kerja aktif: diskusi (read-only) atau eksekusi.
+    work_mode: WorkMode,
     spinner: u8,
 }
 
@@ -356,6 +401,7 @@ impl App {
             // Driver memanggil `set_ready` sesuai status provider.
             ready: true,
             completion: Completion::new(),
+            work_mode: WorkMode::Execute,
             spinner: 0,
         }
     }
@@ -366,6 +412,52 @@ impl App {
 
     pub fn status(&self) -> &str {
         &self.status
+    }
+
+    pub fn work_mode(&self) -> WorkMode {
+        self.work_mode
+    }
+
+    /// Kosongkan transcript dan riwayat model. Sesi (provider, model, cwd)
+    /// tetap; hanya percakapannya yang dibuang.
+    pub fn clear_conversation(&mut self) {
+        self.messages.clear();
+        self.transcript.clear();
+        self.assistant_buf.clear();
+        self.reasoning_buf.clear();
+        self.ctx_used = 0;
+        self.tool_index.clear();
+        self.output_view = None;
+        self.scroll_from_bottom = 0;
+        self.follow = true;
+    }
+
+    /// Set mode kerja tanpa menulis apa pun ke transcript — dipakai saat
+    /// inisialisasi, di mana belum ada riwayat yang perlu dikomentari.
+    pub fn init_work_mode(&mut self, mode: WorkMode) {
+        self.work_mode = mode;
+    }
+
+    /// Ganti mode kerja dan catat di transcript. Driver yang menegakkan mode
+    /// (lewat policy) setelah menerima `Command::SetMode`.
+    pub fn set_work_mode(&mut self, mode: WorkMode) {
+        if self.work_mode == mode {
+            return;
+        }
+        self.work_mode = mode;
+        self.push_blank();
+        match mode {
+            WorkMode::Discuss => self.push_note(
+                "mode discuss: mutating tools are denied — read, search, and explain only",
+            ),
+            WorkMode::Execute => self.push_note("mode execute: the agent may modify the workspace"),
+        }
+        self.scroll_to_bottom();
+    }
+
+    /// Set pemakaian konteks (dipakai test untuk memeriksa label status).
+    pub fn set_context_used(&mut self, used: u64) {
+        self.ctx_used = used;
     }
 
     pub fn set_context_tokens(&mut self, tokens: u32) {
@@ -519,7 +611,7 @@ impl App {
             return false;
         };
         let title = if summary.is_empty() {
-            name
+            name.clone()
         } else {
             format!("{name}  {summary}")
         };
@@ -527,6 +619,7 @@ impl App {
             title,
             body,
             scroll: 0,
+            tool: name,
         });
         true
     }
@@ -561,6 +654,15 @@ impl App {
             }
             Key::Down => {
                 view.scroll = view.scroll.saturating_add(1);
+            }
+            Key::Char('s') | Key::Char('S') => {
+                // Simpan ke `<cwd>/.minic/output/<tool>-<n>.txt`. Driver yang
+                // menulis berkas: kernel tetap bebas I/O, dan kegagalan tulis
+                // dilaporkan sebagai catatan alih-alih menjatuhkan TUI.
+                return Action::Command(Command::SaveOutput {
+                    tool: view.tool.clone(),
+                    body: view.body.clone(),
+                });
             }
             Key::Home => view.scroll = 0,
             Key::End => view.scroll = view.body.lines().count(),
@@ -679,7 +781,11 @@ impl App {
                 self.scroll_down(10);
                 Action::None
             }
-            _ if self.busy => Action::None,
+            // Saat turn berjalan, composer tetap bisa disunting (pengguna
+            // menyiapkan pesan berikutnya), tetapi **tidak bisa dikirim**.
+            // Penyaring ini diletakkan setelah semua arm penyuntingan, jadi
+            // mengetik/menghapus/menggerakkan kursor tetap bekerja.
+            Key::Enter | Key::Newline if self.busy => Action::None,
             Key::Enter => {
                 // Daftar autocomplete terbuka: Enter memilih entri, bukan
                 // mengirim. Tanpa ini, menekan Enter saat daftar tampil akan
@@ -791,10 +897,19 @@ impl App {
                 // yang sudah diketik.
                 if self.completion.is_open() {
                     self.completion.close();
-                } else if !self.input.is_empty() {
+                    return Action::None;
+                }
+                if !self.input.is_empty() {
                     self.input.clear();
                     self.cursor = 0;
                     self.history_index = None;
+                    return Action::None;
+                }
+                // Composer kosong: Esc membatalkan turn yang berjalan. Ini
+                // jalan yang paling dicari saat model berputar lama, tanpa
+                // harus tahu soal Ctrl+C. Tidak ada efek bila tidak ada turn.
+                if self.busy {
+                    return Action::Cancel;
                 }
                 Action::None
             }
@@ -867,6 +982,18 @@ impl App {
             "/connect" | "/provider" | "/login" => Action::Command(Command::Connect),
             "/model" | "/models" => {
                 Action::Command(Command::Model((!rest.is_empty()).then(|| rest.to_string())))
+            }
+            "/discuss" | "/discus" | "/chat" => {
+                self.set_work_mode(WorkMode::Discuss);
+                Action::Command(Command::SetMode(WorkMode::Discuss))
+            }
+            "/execute" | "/exec" | "/build" => {
+                self.set_work_mode(WorkMode::Execute);
+                Action::Command(Command::SetMode(WorkMode::Execute))
+            }
+            "/clear" | "/new" => {
+                self.clear_conversation();
+                Action::Command(Command::Clear)
             }
             "/help" => {
                 self.push_help();
@@ -1277,6 +1404,19 @@ impl App {
 
     pub fn current_tool(&self) -> Option<&str> {
         self.current_tool.as_deref()
+    }
+
+    /// Teks penggunaan konteks untuk status line.
+    ///
+    /// `ctx 0%` pada sesi kosong terbaca seperti "konteks penuh 0%" atau
+    /// "terpakai 0%" tanpa keterangan; lebih jujur menampilkan kapasitasnya
+    /// sebelum ada isi, lalu persentase setelah ada.
+    pub fn context_label(&self) -> String {
+        if self.ctx_used == 0 {
+            format!("ctx {}k", self.context_tokens / 1000)
+        } else {
+            format!("ctx {}%", self.context_percent())
+        }
     }
 
     pub fn context_percent(&self) -> u16 {
@@ -1838,7 +1978,6 @@ fn wrap_body(text: &str, first_cols: usize, rest_cols: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn type_str(app: &mut App, text: &str) {
         for c in text.chars() {
             app.handle_key(Key::Char(c));
@@ -2311,6 +2450,17 @@ mod ctrl_c_semantics_tests {
 
     // ---- autocomplete slash command -------------------------------------
 
+    /// Jalankan slash command tanpa lewat daftar autocomplete.
+    ///
+    /// Mengetik `/foo` membuka daftar saran, dan Enter pertama akan *menerima*
+    /// entri itu alih-alih mengirim command. Untuk test yang fokus pada efek
+    /// command, daftar ditutup dulu supaya Enter benar-benar submit.
+    fn run(app: &mut App, command: &str) -> Action {
+        type_str(app, command);
+        app.completion.close();
+        app.handle_key(Key::Enter)
+    }
+
     fn type_str(app: &mut App, text: &str) {
         for c in text.chars() {
             app.handle_key(Key::Char(c));
@@ -2330,6 +2480,148 @@ mod ctrl_c_semantics_tests {
         let list = items(&app);
         assert!(!list.is_empty(), "daftar harus terbuka setelah '/'");
         assert!(list.contains(&"model"));
+    }
+
+    #[test]
+    fn discuss_and_execute_switch_mode_and_report_it() {
+        let mut app = App::new("test");
+        assert_eq!(app.work_mode(), WorkMode::Execute, "default: eksekusi");
+
+        assert_eq!(
+            run(&mut app, "/discuss"),
+            Action::Command(Command::SetMode(WorkMode::Discuss))
+        );
+        assert_eq!(app.work_mode(), WorkMode::Discuss);
+        // Transcript menyebut konsekuensinya, bukan hanya nama mode.
+        let note = format!("{:?}", app.transcript());
+        assert!(note.contains("mutating tools are denied"), "{note}");
+
+        assert_eq!(
+            run(&mut app, "/execute"),
+            Action::Command(Command::SetMode(WorkMode::Execute))
+        );
+        assert_eq!(app.work_mode(), WorkMode::Execute);
+    }
+
+    #[test]
+    fn mode_aliases_are_accepted() {
+        for (typed, expected) in [
+            ("/discus", WorkMode::Discuss),
+            ("/chat", WorkMode::Discuss),
+            ("/exec", WorkMode::Execute),
+            ("/build", WorkMode::Execute),
+        ] {
+            let mut app = App::new("test");
+            app.init_work_mode(WorkMode::Discuss);
+            run(&mut app, typed);
+            assert_eq!(app.work_mode(), expected, "{typed}");
+        }
+    }
+
+    #[test]
+    fn setting_the_same_mode_twice_does_not_spam_the_transcript() {
+        let mut app = App::new("test");
+        run(&mut app, "/execute");
+        let after_first = app.transcript().len();
+        run(&mut app, "/execute");
+        assert_eq!(
+            app.transcript().len(),
+            after_first,
+            "mode yang sama tidak perlu dicatat ulang"
+        );
+    }
+
+    #[test]
+    fn clear_empties_the_conversation_but_keeps_the_session() {
+        let mut app = App::new("model-x · execute");
+        app.load_history(vec![Message::user("halo"), Message::assistant("hai")]);
+        assert!(!app.messages().is_empty());
+        assert!(!app.transcript().is_empty());
+
+        assert_eq!(run(&mut app, "/clear"), Action::Command(Command::Clear));
+
+        assert!(app.messages().is_empty(), "riwayat model harus kosong");
+        assert!(app.transcript().is_empty(), "transcript harus kosong");
+        // Sesi tidak ikut hilang.
+        assert_eq!(app.status(), "model-x · execute");
+    }
+
+    #[test]
+    fn enter_does_not_submit_while_a_turn_is_running() {
+        let mut app = App::new("test");
+        app.begin_turn();
+        type_str(&mut app, "pesan berikutnya");
+        // Composer boleh diisi selagi menunggu...
+        assert_eq!(app.input(), "pesan berikutnya");
+        // ...tapi tidak boleh mengirim turn kedua di tengah turn pertama.
+        assert_eq!(app.handle_key(Key::Enter), Action::None);
+        assert_eq!(app.handle_key(Key::Newline), Action::None);
+        assert_eq!(app.input(), "pesan berikutnya", "teks tidak boleh hilang");
+    }
+
+    #[test]
+    fn composer_editing_still_works_while_busy() {
+        let mut app = App::new("test");
+        app.begin_turn();
+        type_str(&mut app, "abc");
+        app.handle_key(Key::Left);
+        app.handle_key(Key::Backspace);
+        assert_eq!(
+            app.input(),
+            "ac",
+            "menyunting harus tetap bekerja saat busy"
+        );
+    }
+
+    #[test]
+    fn esc_cancels_a_running_turn_when_the_composer_is_empty() {
+        let mut app = App::new("test");
+        app.begin_turn();
+        assert_eq!(app.handle_key(Key::Esc), Action::Cancel);
+    }
+
+    #[test]
+    fn esc_does_nothing_when_idle_and_composer_is_empty() {
+        let mut app = App::new("test");
+        assert_eq!(app.handle_key(Key::Esc), Action::None);
+    }
+
+    #[test]
+    fn esc_clears_typed_text_before_cancelling() {
+        let mut app = App::new("test");
+        app.begin_turn();
+        type_str(&mut app, "setengah");
+        assert_eq!(app.input(), "setengah", "input harus terisi walau busy");
+        // Esc pertama membuang ketikan, tidak membatalkan turn.
+        assert_eq!(app.handle_key(Key::Esc), Action::None);
+        assert_eq!(app.input(), "");
+        // Esc kedua baru membatalkan.
+        assert_eq!(app.handle_key(Key::Esc), Action::Cancel);
+    }
+
+    #[test]
+    fn context_label_shows_capacity_before_any_usage() {
+        let mut app = App::new("test");
+        app.set_context_tokens(128_000);
+        // Sesi kosong: persentase akan terbaca "0%" tanpa keterangan.
+        assert_eq!(app.context_label(), "ctx 128k");
+        app.set_context_used(64_000);
+        assert_eq!(app.context_label(), "ctx 50%");
+    }
+
+    #[test]
+    fn unknown_slash_command_suggests_the_current_registry() {
+        let mut app = App::new("test");
+        assert_eq!(run(&mut app, "/plan"), Action::None);
+        let note = format!("{:?}", app.transcript());
+        assert!(note.contains("unknown command"), "{note}");
+        // Saran dibangun dari registry: command yang sudah dihapus tidak ikut
+        // ditawarkan. `/plan` hanya muncul sebagai nama yang gagal, bukan di
+        // daftar saran setelah kata "try".
+        assert!(note.contains("/discuss"), "{note}");
+        let suggestions = note.split("try ").nth(1).unwrap_or_default();
+        assert!(!suggestions.contains("/plan"), "{note}");
+        assert!(!suggestions.contains("/verify"), "{note}");
     }
 
     #[test]
@@ -2356,10 +2648,10 @@ mod ctrl_c_semantics_tests {
     #[test]
     fn tab_completes_without_running_the_command() {
         let mut app = App::new("test");
-        type_str(&mut app, "/ver");
+        type_str(&mut app, "/exec");
         assert_eq!(app.handle_key(Key::Tab), Action::None);
-        // Command berargumen: harus ada spasi agar bisa langsung mengetik argumen.
-        assert_eq!(app.input(), "/verify ");
+        // Tanpa argumen: nama command diisi penuh, tanpa spasi tambahan.
+        assert_eq!(app.input(), "/execute");
         assert!(items(&app).is_empty());
     }
 

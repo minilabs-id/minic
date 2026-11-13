@@ -62,16 +62,22 @@ pub const COMMANDS: &[SlashCommand] = &[
         args: ArgKind::None,
     },
     SlashCommand {
-        name: "plan",
-        aliases: &["plans"],
-        about: "tinjau rencana tersimpan",
+        name: "discuss",
+        aliases: &["discus", "chat"],
+        about: "mode diskusi: baca saja, tanpa mengubah berkas",
         args: ArgKind::None,
     },
     SlashCommand {
-        name: "verify",
-        aliases: &[],
-        about: "jalankan perintah verifikasi sekarang",
-        args: ArgKind::Required("CMD"),
+        name: "execute",
+        aliases: &["exec", "build"],
+        about: "mode eksekusi: boleh mengubah berkas dan menjalankan perintah",
+        args: ArgKind::None,
+    },
+    SlashCommand {
+        name: "clear",
+        aliases: &["new"],
+        about: "kosongkan percakapan, sesi tetap hidup",
+        args: ArgKind::None,
     },
     SlashCommand {
         name: "help",
@@ -345,11 +351,26 @@ mod tests {
     }
 
     #[test]
-    fn insert_text_adds_trailing_space_only_when_arguments_are_needed() {
-        let model = COMMANDS.iter().find(|c| c.name == "model").unwrap();
-        assert_eq!(model.insert_text(), "/model");
-        let verify = COMMANDS.iter().find(|c| c.name == "verify").unwrap();
-        assert_eq!(verify.insert_text(), "/verify ");
+    fn insert_text_adds_a_trailing_space_only_for_argument_commands() {
+        // Semua command saat ini tanpa argumen, jadi tidak ada yang menyisipkan
+        // spasi. Aturannya tetap diuji lewat `SlashCommand` yang dibuat di sini
+        // agar perilakunya tidak hilang diam-diam bila argumen ditambahkan lagi.
+        for cmd in COMMANDS {
+            assert_eq!(
+                cmd.insert_text(),
+                format!("/{}", cmd.name),
+                "command tanpa argumen tidak boleh menyisipkan spasi ({})",
+                cmd.name
+            );
+            assert_eq!(cmd.args, ArgKind::None, "{}", cmd.name);
+        }
+        let with_arg = SlashCommand {
+            name: "demo",
+            aliases: &[],
+            about: "demo",
+            args: ArgKind::Required("CMD"),
+        };
+        assert_eq!(with_arg.insert_text(), "/demo ");
     }
 
     #[test]
